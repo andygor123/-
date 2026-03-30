@@ -25,7 +25,9 @@ const TEMP_UPLOAD_DIR = path.join(DATA_ROOT, 'tmp-uploads')
 const DIST_DIR = path.join(ROOT, 'dist')
 const DIST_INDEX = path.join(DIST_DIR, 'index.html')
 const UPLOAD_TOKEN_TTL_MS = 10 * 60 * 1000
+const ENTRY_TOKEN_TTL_MS = 24 * 60 * 60 * 1000
 const uploadTickets = new Map<string, { userId: string; expiresAt: number }>()
+const entryTickets = new Map<string, number>()
 
 fs.mkdirSync(UPLOAD_DIR, { recursive: true })
 fs.mkdirSync(TEMP_UPLOAD_DIR, { recursive: true })
@@ -105,6 +107,12 @@ function threadSummary(thread: QuestionThread, replies: QuestionReply[], users: 
   }
 }
 
+function cleanupTempUpload(file?: Express.Multer.File | null) {
+  if (!file?.path) return
+  if (!fs.existsSync(file.path)) return
+  fs.unlinkSync(file.path)
+}
+
 declare global {
   namespace Express {
     interface Request {
@@ -155,6 +163,30 @@ export function createApp() {
     }
   }
 
+  function buildingAccessFromHeader() {
+    return (req: express.Request, res: express.Response, next: express.NextFunction) => {
+      const deviceIdentityKey = String(req.header('x-device-identity') ?? '').trim()
+      if (!deviceIdentityKey) {
+        return res.status(401).json({ error: 'missing_device_identity' })
+      }
+
+      const store = readStore()
+      const user = store.users.find((item) => item.deviceIdentityKey === deviceIdentityKey)
+      if (user) {
+        req.user = user
+        return next()
+      }
+
+      const entryExpiresAt = entryTickets.get(deviceIdentityKey)
+      if (!entryExpiresAt || entryExpiresAt < Date.now()) {
+        entryTickets.delete(deviceIdentityKey)
+        return res.status(401).json({ error: 'building_access_required' })
+      }
+
+      return next()
+    }
+  }
+
   app.get('/api/bootstrap', (_req, res) => {
     const store = readStore()
     res.json({
@@ -172,6 +204,8 @@ export function createApp() {
     const deviceIdentityKey = req.body?.deviceIdentityKey
       ? String(req.body.deviceIdentityKey)
       : `device-${crypto.randomUUID()}`
+
+    entryTickets.set(deviceIdentityKey, Date.now() + ENTRY_TOKEN_TTL_MS)
 
     return res.json({
       ok: true,
@@ -202,6 +236,15 @@ export function createApp() {
       return res.status(400).json({ error: 'invalid_profile' })
     }
 
+    const current = readStore()
+    const existingProfile = current.users.find((user) => user.deviceIdentityKey === deviceIdentityKey)
+    const entryExpiresAt = entryTickets.get(deviceIdentityKey)
+
+    if (!existingProfile && (!entryExpiresAt || entryExpiresAt < Date.now())) {
+      entryTickets.delete(deviceIdentityKey)
+      return res.status(401).json({ error: 'building_access_required' })
+    }
+
     const nextState = updateStore((store) => {
       const existing = store.users.find((user) => user.deviceIdentityKey === deviceIdentityKey)
       if (existing) {
@@ -224,11 +267,13 @@ export function createApp() {
       }
     })
 
+    entryTickets.delete(deviceIdentityKey)
+
     const profile = nextState.users.find((user) => user.deviceIdentityKey === deviceIdentityKey)!
     return res.json({ profile })
   })
 
-  app.get('/api/posts', (req, res) => {
+  app.get('/api/posts', buildingAccessFromHeader(), (req, res) => {
     const type = String(req.query.type ?? 'available') as 'available' | 'wanted' | 'history'
     const store = readStore()
 
@@ -255,7 +300,7 @@ export function createApp() {
     return res.json({ posts: payload })
   })
 
-  app.get('/api/posts/:id', (req, res) => {
+  app.get('/api/posts/:id', buildingAccessFromHeader(), (req, res) => {
     const store = readStore()
     const post = store.posts.find((item) => item.id === req.params.id)
     if (!post) {
@@ -296,7 +341,7 @@ export function createApp() {
     })
   })
 
-  app.get('/api/ask/threads', (_req, res) => {
+  app.get('/api/ask/threads', buildingAccessFromHeader(), (_req, res) => {
     const store = readStore()
     const limit = Math.max(1, Math.min(20, Number(_req.query.limit ?? 20) || 20))
 
@@ -309,7 +354,7 @@ export function createApp() {
     return res.json({ threads })
   })
 
-  app.get('/api/ask/threads/:id', (req, res) => {
+  app.get('/api/ask/threads/:id', buildingAccessFromHeader(), (req, res) => {
     const store = readStore()
     const thread = store.questionThreads.find((item) => item.id === req.params.id && !item.removedAt)
     if (!thread) {
@@ -594,6 +639,7 @@ export function createApp() {
     const token = String(req.params.token)
     const ticket = uploadTickets.get(token)
     if (!ticket || ticket.userId !== user.id || ticket.expiresAt < Date.now()) {
+      cleanupTempUpload(req.file)
       uploadTickets.delete(token)
       return res.status(400).json({ error: 'invalid_upload_token' })
     }

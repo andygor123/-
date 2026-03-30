@@ -2,6 +2,8 @@ import request from 'supertest'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { createApp } from './app.ts'
 import { seedState, writeStore } from './store.ts'
+import fs from 'node:fs'
+import path from 'node:path'
 
 describe('server app', () => {
   beforeEach(() => {
@@ -50,6 +52,33 @@ describe('server app', () => {
     expect(profile.body.profile.wechatHandle).toBe('may12a')
   })
 
+  it('rejects profile creation without verified building access', async () => {
+    const app = createApp()
+
+    const profile = await request(app)
+      .put('/api/profile')
+      .set('x-device-identity', 'device-unverified')
+      .send({
+        nickname: '阿May',
+        roomFragment: '12A',
+        wechatHandle: 'may12a',
+      })
+
+    expect(profile.status).toBe(401)
+    expect(profile.body.error).toBe('building_access_required')
+  })
+
+  it('rejects post list access without building verification', async () => {
+    const app = createApp()
+
+    const response = await request(app)
+      .get('/api/posts?type=available')
+      .set('x-device-identity', 'device-unverified')
+
+    expect(response.status).toBe(401)
+    expect(response.body.error).toBe('building_access_required')
+  })
+
   it('rejects claim when selected resident never expressed interest', async () => {
     const app = createApp()
 
@@ -66,6 +95,7 @@ describe('server app', () => {
 
   it('rejects upload when token was never issued for this resident', async () => {
     const app = createApp()
+    const beforeFiles = new Set(fs.readdirSync(path.resolve(process.cwd(), '.context', 'data', 'tmp-uploads')))
 
     const response = await request(app)
       .put('/api/uploads/local/not-real')
@@ -74,6 +104,8 @@ describe('server app', () => {
 
     expect(response.status).toBe(400)
     expect(response.body.error).toBe('invalid_upload_token')
+    const afterFiles = fs.readdirSync(path.resolve(process.cwd(), '.context', 'data', 'tmp-uploads'))
+    expect(afterFiles.filter((name) => !beforeFiles.has(name))).toHaveLength(0)
   })
 
   it('accepts upload only after a signed token is issued', async () => {
@@ -97,7 +129,9 @@ describe('server app', () => {
   it('returns ask thread summaries ordered by latest activity', async () => {
     const app = createApp()
 
-    const response = await request(app).get('/api/ask/threads?limit=2')
+    const response = await request(app)
+      .get('/api/ask/threads?limit=2')
+      .set('x-device-identity', 'seed-lin')
 
     expect(response.status).toBe(200)
     expect(response.body.threads).toHaveLength(2)
