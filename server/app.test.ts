@@ -93,6 +93,28 @@ describe('server app', () => {
     expect(response.body.error).toBe('claimer_not_interested')
   })
 
+  it('does not expose owner wechat handle before the viewer interacts', async () => {
+    const app = createApp()
+
+    const response = await request(app)
+      .get('/api/posts/post-1')
+      .set('x-device-identity', 'seed-ma')
+
+    expect(response.status).toBe(200)
+    expect(response.body.post.ownerWechatHandle).toBeNull()
+  })
+
+  it('exposes owner wechat handle after the viewer expresses interest', async () => {
+    const app = createApp()
+
+    const response = await request(app)
+      .get('/api/posts/post-1')
+      .set('x-device-identity', 'seed-zhou')
+
+    expect(response.status).toBe(200)
+    expect(response.body.post.ownerWechatHandle).toBe('linayi12a')
+  })
+
   it('rejects upload when token was never issued for this resident', async () => {
     const app = createApp()
     const beforeFiles = new Set(fs.readdirSync(path.resolve(process.cwd(), '.context', 'data', 'tmp-uploads')))

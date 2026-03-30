@@ -311,6 +311,12 @@ export function createApp() {
     const viewer = req.header('x-device-identity')
       ? store.users.find((user) => user.deviceIdentityKey === req.header('x-device-identity'))
       : null
+    const alreadyInterested = viewer
+      ? store.postInterests.some((interest) => interest.postId === post.id && interest.userId === viewer.id)
+      : false
+    const canViewOwnerWechatHandle = viewer
+      ? viewer.id === post.userId || alreadyInterested || post.claimedByUserId === viewer.id
+      : false
 
     return res.json({
       post: {
@@ -333,10 +339,8 @@ export function createApp() {
               createdAt: interest.createdAt,
             }
           }),
-        ownerWechatHandle: owner?.wechatHandle ?? null,
-        alreadyInterested: viewer
-          ? store.postInterests.some((interest) => interest.postId === post.id && interest.userId === viewer.id)
-          : false,
+        ownerWechatHandle: canViewOwnerWechatHandle ? owner?.wechatHandle ?? null : null,
+        alreadyInterested,
       },
     })
   })

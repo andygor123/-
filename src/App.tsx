@@ -502,20 +502,14 @@ function App() {
       ? await navigator.clipboard.writeText(trimmedHandle).then(() => true).catch(() => false)
       : false
 
-    if (isWeChatEmbedded()) {
-      setContactNotice(
-        copied
-          ? `已复制微信号：${trimmedHandle}。请回到微信主界面，搜索或添加对方。`
-          : `请手动复制微信号：${trimmedHandle}，再回到微信主界面添加对方。`,
-      )
-      return
-    }
-
-    window.location.href = `weixin://dl/chat?${encodeURIComponent(trimmedHandle)}`
     setContactNotice(
-      copied
-        ? `如果没有自动拉起微信，微信号已复制：${trimmedHandle}。`
-        : `如果没有自动拉起微信，请手动复制对方微信号：${trimmedHandle}。`,
+      isWeChatEmbedded()
+        ? copied
+          ? `已复制对方微信号：${trimmedHandle}。请回到微信主界面，搜索或添加对方。`
+          : `请手动复制对方微信号：${trimmedHandle}，再回到微信主界面添加对方。`
+        : copied
+          ? `已复制对方微信号：${trimmedHandle}。现在可到微信里搜索或添加。`
+          : `请手动复制对方微信号：${trimmedHandle}，再到微信里搜索或添加。`,
     )
   }
 
@@ -1303,7 +1297,7 @@ function App() {
                     className="secondary-button"
                     onClick={() => void handleContactOwner(selectedPost.ownerWechatHandle!)}
                   >
-                    {isWeChatEmbedded() ? '复制微信号' : '联系TA（微信）'}
+                    复制TA微信号
                   </button>
                 ) : null}
               </div>

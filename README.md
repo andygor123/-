@@ -6,7 +6,7 @@
 
 ```bash
 npm install
-npm run dev
+npm run dev:all
 ```
 
 ## 当前范围
