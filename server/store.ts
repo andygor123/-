@@ -20,6 +20,8 @@ export interface PostItem {
   status: PostStatus
   title: string
   category: string
+  priceType?: 'free' | 'paid'
+  priceCny?: number
   description?: string
   pickupNote?: string
   imageUrl?: string
@@ -126,6 +128,8 @@ export const seedState: StoreShape = {
       status: 'available',
       title: '九成新书架',
       category: '家具',
+      priceType: 'paid',
+      priceCny: 80,
       description: '白色书架，拆开后可进电梯，今天晚上可自取。',
       pickupNote: '今晚 7 点后可取',
       imageUrl: '/sample-bookshelf.svg',
@@ -144,6 +148,8 @@ export const seedState: StoreShape = {
       status: 'available',
       title: '求 8kg 可入阳台的洗衣机',
       category: '家电',
+      priceType: 'paid',
+      priceCny: 600,
       description: '最好深度不要超过 55cm，本周内可搬。',
       createdAt: new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString(),
       updatedAt: new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString(),
@@ -155,6 +161,7 @@ export const seedState: StoreShape = {
       status: 'removed',
       title: '儿童学习椅',
       category: '家居',
+      priceType: 'free',
       imageUrl: '/sample-chair.svg',
       claimedByUserId: 'resident-he',
       claimedAt: new Date(Date.now() - 26 * 60 * 60 * 1000).toISOString(),

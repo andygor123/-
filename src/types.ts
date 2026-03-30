@@ -41,6 +41,8 @@ export interface PostItem {
   status: PostStatus
   title: string
   category: string
+  priceType?: 'free' | 'paid'
+  priceCny?: number
   description?: string
   pickupNote?: string
   imageUrl?: string
@@ -48,7 +50,9 @@ export interface PostItem {
   interestUserIds: string[]
   interestedResidents?: InterestedResident[]
   alreadyInterested?: boolean
+  needsAttention?: boolean
   claimedByUserId?: string
+  claimedAt?: string
   createdAt: string
   updatedAt: string
   removedAt?: string

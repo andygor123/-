@@ -75,6 +75,8 @@ export async function createPost(input: {
   postType: PostType
   title: string
   category: string
+  priceType?: 'free' | 'paid'
+  priceCny?: number
   description?: string
   pickupNote?: string
   imageUrl?: string

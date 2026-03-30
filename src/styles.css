@@ -532,7 +532,8 @@ a {
 }
 
 .category-pill,
-.status-pill {
+.status-pill,
+.price-pill {
   display: inline-flex;
   align-items: center;
   padding: 6px 10px;
@@ -557,6 +558,22 @@ a {
 .status-pill.removed {
   background: rgba(233, 230, 227, 0.95);
   color: #71675e;
+}
+
+.price-pill {
+  background: rgba(214, 238, 225, 0.92);
+  color: #1f5a43;
+}
+
+.attention-pill {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: rgba(255, 239, 198, 0.96);
+  color: #7b5a12;
+  font-size: 0.8rem;
 }
 
 .post-card h3,
@@ -840,6 +857,26 @@ a {
 .optional-grid {
   display: grid;
   gap: 12px;
+}
+
+.price-mode-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.price-toggle {
+  min-height: 42px;
+  border-radius: 14px;
+  border: 1px solid rgba(129, 146, 120, 0.22);
+  background: rgba(255, 255, 255, 0.84);
+  color: #4f5f49;
+}
+
+.price-toggle.active {
+  border-color: rgba(40, 72, 53, 0.26);
+  background: rgba(219, 236, 225, 0.9);
+  color: #203624;
 }
 
 .checkbox-row {

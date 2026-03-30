@@ -115,6 +115,36 @@ describe('server app', () => {
     expect(response.body.post.ownerWechatHandle).toBe('linayi12a')
   })
 
+  it('auto archives claimed posts after 24 hours when loading posts', async () => {
+    writeStore({
+      ...JSON.parse(JSON.stringify(seedState)),
+      posts: [
+        ...JSON.parse(JSON.stringify(seedState)).posts,
+        {
+          id: 'post-old-claimed',
+          userId: 'resident-lin',
+          postType: 'available',
+          status: 'claimed',
+          title: '旧微波炉',
+          category: '家电',
+          priceType: 'free',
+          claimedByUserId: 'resident-zhou',
+          claimedAt: new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString(),
+          createdAt: new Date(Date.now() - 30 * 60 * 60 * 1000).toISOString(),
+          updatedAt: new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString(),
+        },
+      ],
+    })
+    const app = createApp()
+
+    const response = await request(app)
+      .get('/api/posts?type=history')
+      .set('x-device-identity', 'seed-lin')
+
+    expect(response.status).toBe(200)
+    expect(response.body.posts.some((post: { id: string }) => post.id === 'post-old-claimed')).toBe(true)
+  })
+
   it('rejects upload when token was never issued for this resident', async () => {
     const app = createApp()
     const beforeFiles = new Set(fs.readdirSync(path.resolve(process.cwd(), '.context', 'data', 'tmp-uploads')))
@@ -192,5 +222,24 @@ describe('server app', () => {
 
     expect(level4.status).toBe(400)
     expect(level4.body.error).toBe('reply_depth_exceeded')
+  })
+
+  it('rejects paid post creation without a valid price', async () => {
+    const app = createApp()
+
+    const response = await request(app)
+      .post('/api/posts')
+      .set('x-device-identity', 'seed-lin')
+      .send({
+        postType: 'available',
+        title: '办公椅',
+        category: '家具',
+        imageUrl: '/sample-chair.svg',
+        priceType: 'paid',
+        priceCny: 0,
+      })
+
+    expect(response.status).toBe(400)
+    expect(response.body.error).toBe('invalid_price')
   })
 })

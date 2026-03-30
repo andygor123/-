@@ -42,8 +42,20 @@ function formatTime(value: string) {
   }).format(new Date(value))
 }
 
+function formatPrice(post: Pick<PostItem, 'postType' | 'priceType' | 'priceCny'>) {
+  if ((post.priceType ?? 'free') === 'free') {
+    return post.postType === 'wanted' ? '价格可商量' : '免费送'
+  }
+
+  return post.postType === 'wanted' ? `期望 ¥${post.priceCny}` : `转让 ¥${post.priceCny}`
+}
+
 function sortPosts(items: PostItem[]) {
   return [...items].sort((a, b) => {
+    const attentionRank = (post: PostItem) => (post.needsAttention && post.status !== 'removed' ? 0 : 1)
+    if (attentionRank(a) !== attentionRank(b)) {
+      return attentionRank(a) - attentionRank(b)
+    }
     const statusRank = (post: PostItem) => (post.status === 'available' ? 0 : post.status === 'claimed' ? 1 : 2)
     if (statusRank(a) !== statusRank(b)) {
       return statusRank(a) - statusRank(b)
@@ -113,6 +125,8 @@ function App() {
   const [postDraft, setPostDraft] = useState({
     title: '',
     category: categoryOptions[0],
+    priceType: 'free' as 'free' | 'paid',
+    priceCny: '',
     description: '',
     pickupNote: '',
     imageUrl: '',
@@ -260,6 +274,8 @@ function App() {
     setPostDraft({
       title: '',
       category: categoryOptions[0],
+      priceType: 'free',
+      priceCny: '',
       description: '',
       pickupNote: '',
       imageUrl: '',
@@ -292,6 +308,10 @@ function App() {
       setFormError('发布闲置时需要一张图片。')
       return
     }
+    if (postDraft.priceType === 'paid' && (!postDraft.priceCny.trim() || Number(postDraft.priceCny) <= 0)) {
+      setFormError(composerMode === 'wanted' ? '请填写合理预算。' : '请填写合理转让价。')
+      return
+    }
 
     const fitMetadata: FitMetadata = {}
     if (postDraft.sizeNote.trim()) fitMetadata.sizeNote = postDraft.sizeNote.trim()
@@ -309,6 +329,8 @@ function App() {
         postType: composerMode,
         title: postDraft.title.trim(),
         category: postDraft.category,
+        priceType: postDraft.priceType,
+        priceCny: postDraft.priceType === 'paid' ? Number(postDraft.priceCny) : undefined,
         description: postDraft.description.trim() || undefined,
         pickupNote: postDraft.pickupNote.trim() || undefined,
         imageUrl,
@@ -790,8 +812,14 @@ function App() {
               <div className="post-content">
                 <div className="post-topline">
                   <span className="category-pill">{post.category}</span>
+                  <span className="price-pill">{formatPrice(post)}</span>
                   <span className={`status-pill ${post.status}`}>{post.status === 'available' ? '可联系' : post.status === 'claimed' ? '已认领' : '已完成'}</span>
                 </div>
+                {post.needsAttention ? (
+                  <div className="attention-pill">
+                    {post.status === 'claimed' ? '你跟进中的物品' : '你已表达兴趣'}
+                  </div>
+                ) : null}
                 <h3>{post.title}</h3>
                 <p className="muted-line">{post.pickupNote || post.description || '点击查看详情和联系信息'}</p>
                 <div className="post-meta-strip">
@@ -902,9 +930,42 @@ function App() {
               {composerMode === 'wanted' ? (
                 <div className="wanted-form-rail">
                   <span>先写核心需求</span>
+                  <span>再说心理价位</span>
                   <span>再补条件</span>
                   <span>最后留好联系时间</span>
                 </div>
+              ) : null}
+              <label>
+                <span>{composerMode === 'available' ? '转让方式' : '心理价位'}</span>
+                <div className="price-mode-row">
+                  <button
+                    type="button"
+                    className={postDraft.priceType === 'free' ? 'price-toggle active' : 'price-toggle'}
+                    onClick={() => setPostDraft((current) => ({ ...current, priceType: 'free', priceCny: '' }))}
+                  >
+                    {composerMode === 'wanted' ? '价格可商量' : '免费送'}
+                  </button>
+                  <button
+                    type="button"
+                    className={postDraft.priceType === 'paid' ? 'price-toggle active' : 'price-toggle'}
+                    onClick={() => setPostDraft((current) => ({ ...current, priceType: 'paid' }))}
+                  >
+                    {composerMode === 'wanted' ? '我有预算' : '有偿转让'}
+                  </button>
+                </div>
+              </label>
+              {postDraft.priceType === 'paid' ? (
+                <label>
+                  <span>{composerMode === 'wanted' ? '预算上限（元）' : '转让价（元）'}</span>
+                  <input
+                    inputMode="numeric"
+                    value={postDraft.priceCny}
+                    onChange={(event) =>
+                      setPostDraft((current) => ({ ...current, priceCny: event.target.value.replace(/[^\d]/g, '') }))
+                    }
+                    placeholder={composerMode === 'wanted' ? '例如：600' : '例如：80'}
+                  />
+                </label>
               ) : null}
               <label>
                 <span>{composerMode === 'available' ? '标题' : '你想找什么'}</span>
@@ -1217,6 +1278,7 @@ function App() {
             {selectedPost.imageUrl ? <img className="detail-image" src={selectedPost.imageUrl} alt={selectedPost.title} /> : null}
             <div className="detail-meta">
               <span className="category-pill">{selectedPost.category}</span>
+              <span className="price-pill">{formatPrice(selectedPost)}</span>
               <span className={`status-pill ${selectedPost.status}`}>{selectedPost.status === 'available' ? '可联系' : selectedPost.status === 'claimed' ? '已认领' : '已完成'}</span>
               <span>{selectedPost.interestUserIds.length} 人感兴趣</span>
             </div>
@@ -1257,6 +1319,9 @@ function App() {
               </div>
             </div>
             {selectedPost.description ? <p className="detail-copy">{selectedPost.description}</p> : null}
+            {selectedPost.status === 'claimed' && selectedPost.claimedAt ? (
+              <p className="detail-note">若屋主 24 小时内未手动处理，系统会自动移入完成记录。</p>
+            ) : null}
             {selectedPost.pickupNote ? <p className="detail-note">取货备注：{selectedPost.pickupNote}</p> : null}
             {selectedPost.fitMetadata ? (
               <div className="fit-panel">

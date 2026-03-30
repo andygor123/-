@@ -26,15 +26,48 @@ const DIST_DIR = path.join(ROOT, 'dist')
 const DIST_INDEX = path.join(DIST_DIR, 'index.html')
 const UPLOAD_TOKEN_TTL_MS = 10 * 60 * 1000
 const ENTRY_TOKEN_TTL_MS = 24 * 60 * 60 * 1000
+const CLAIM_ARCHIVE_AFTER_MS = 24 * 60 * 60 * 1000
 const uploadTickets = new Map<string, { userId: string; expiresAt: number }>()
 const entryTickets = new Map<string, number>()
 
 fs.mkdirSync(UPLOAD_DIR, { recursive: true })
 fs.mkdirSync(TEMP_UPLOAD_DIR, { recursive: true })
 
-function listView(post: PostItem, users: ResidentProfile[], interestCount: number) {
+function applyPostLifecycle(store: ReturnType<typeof readStore>) {
+  const now = Date.now()
+  let mutated = false
+  const nextPosts = store.posts.map((post) => {
+    if (post.status !== 'claimed' || !post.claimedAt) return post
+    if (now - new Date(post.claimedAt).getTime() < CLAIM_ARCHIVE_AFTER_MS) return post
+    mutated = true
+    return {
+      ...post,
+      status: 'removed' as const,
+      removedAt: post.removedAt ?? new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }
+  })
+
+  if (!mutated) return store
+  const nextState = {
+    ...store,
+    posts: nextPosts,
+  }
+  writeStore(nextState)
+  return nextState
+}
+
+function listView(post: PostItem, users: ResidentProfile[], interestCount: number, viewerId?: string) {
   const owner = users.find((user) => user.id === post.userId)
   const store = readStore()
+  const alreadyInterested = viewerId
+    ? store.postInterests.some((interest) => interest.postId === post.id && interest.userId === viewerId)
+    : false
+  const needsAttention = Boolean(
+    viewerId &&
+      post.userId !== viewerId &&
+      ((post.status === 'available' && alreadyInterested) || post.claimedByUserId === viewerId),
+  )
   return {
     id: post.id,
     ownerId: post.userId,
@@ -44,6 +77,8 @@ function listView(post: PostItem, users: ResidentProfile[], interestCount: numbe
     status: post.status,
     title: post.title,
     category: post.category,
+    priceType: post.priceType ?? 'free',
+    priceCny: post.priceCny ?? null,
     description: post.description ?? null,
     pickupNote: post.pickupNote ?? null,
     imageUrl: post.imageUrl ?? null,
@@ -64,8 +99,11 @@ function listView(post: PostItem, users: ResidentProfile[], interestCount: numbe
       }),
     createdAt: post.createdAt,
     updatedAt: post.updatedAt,
+    claimedAt: post.claimedAt ?? null,
     removedAt: post.removedAt ?? null,
     interestCount,
+    alreadyInterested,
+    needsAttention,
   }
 }
 
@@ -219,7 +257,7 @@ export function createApp() {
       return res.json({ profile: null })
     }
 
-    const store = readStore()
+    const store = applyPostLifecycle(readStore())
     const profile = store.users.find((user) => user.deviceIdentityKey === deviceIdentityKey) ?? null
     return res.json({ profile })
   })
@@ -275,7 +313,8 @@ export function createApp() {
 
   app.get('/api/posts', buildingAccessFromHeader(), (req, res) => {
     const type = String(req.query.type ?? 'available') as 'available' | 'wanted' | 'history'
-    const store = readStore()
+    const store = applyPostLifecycle(readStore())
+    const viewerId = req.user?.id
 
     const items = store.posts.filter((post) => {
       if (type === 'history') return post.status === 'removed'
@@ -289,9 +328,13 @@ export function createApp() {
           post,
           store.users,
           store.postInterests.filter((interest) => interest.postId === post.id).length,
+          viewerId,
         ),
       )
       .sort((left, right) => {
+        const attentionRank = (post: { needsAttention?: boolean; status: string }) =>
+          post.needsAttention && post.status !== 'removed' ? 0 : 1
+        if (attentionRank(left) !== attentionRank(right)) return attentionRank(left) - attentionRank(right)
         const rank = (status: string) => (status === 'available' ? 0 : status === 'claimed' ? 1 : 2)
         if (rank(left.status) !== rank(right.status)) return rank(left.status) - rank(right.status)
         return new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime()
@@ -301,7 +344,7 @@ export function createApp() {
   })
 
   app.get('/api/posts/:id', buildingAccessFromHeader(), (req, res) => {
-    const store = readStore()
+    const store = applyPostLifecycle(readStore())
     const post = store.posts.find((item) => item.id === req.params.id)
     if (!post) {
       return res.status(404).json({ error: 'post_not_found' })
@@ -324,6 +367,7 @@ export function createApp() {
           post,
           store.users,
           store.postInterests.filter((interest) => interest.postId === post.id).length,
+          viewer?.id,
         ),
         interestUserIds: store.postInterests
           .filter((interest) => interest.postId === post.id)
@@ -483,7 +527,7 @@ export function createApp() {
 
   app.post('/api/posts', profileFromHeader(), (req, res) => {
     const user = req.user!
-    const { postType, title, category, description, pickupNote, imageUrl, fitMetadata } = req.body ?? {}
+    const { postType, title, category, priceType, priceCny, description, pickupNote, imageUrl, fitMetadata } = req.body ?? {}
 
     if (!String(title ?? '').trim() || !String(category ?? '').trim()) {
       return res.status(400).json({ error: 'missing_required_fields' })
@@ -497,6 +541,12 @@ export function createApp() {
       return res.status(400).json({ error: 'image_required_for_available' })
     }
 
+    const normalizedPriceType = priceType === 'paid' ? 'paid' : 'free'
+    const normalizedPriceCny = normalizedPriceType === 'paid' ? Number(priceCny) : undefined
+    if (normalizedPriceType === 'paid' && (!Number.isFinite(normalizedPriceCny) || normalizedPriceCny <= 0)) {
+      return res.status(400).json({ error: 'invalid_price' })
+    }
+
     const post: PostItem = {
       id: `post-${crypto.randomUUID()}`,
       userId: user.id,
@@ -504,6 +554,8 @@ export function createApp() {
       status: 'available',
       title: String(title).trim(),
       category: String(category).trim(),
+      priceType: normalizedPriceType,
+      priceCny: normalizedPriceType === 'paid' ? Math.round(normalizedPriceCny as number) : undefined,
       description: String(description ?? '').trim() || undefined,
       pickupNote: String(pickupNote ?? '').trim() || undefined,
       imageUrl: String(imageUrl ?? '').trim() || undefined,
