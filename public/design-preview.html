@@ -1,0 +1,991 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>楼里换物板 Design Preview</title>
+    <style>
+      :root {
+        --ink: #1c211b;
+        --ink-soft: #5b6656;
+        --moss: #202f1e;
+        --leaf: #d7f1cc;
+        --paper: #fffaf5;
+        --sand: #f7f2e7;
+        --mist: #f2ede2;
+        --line: rgba(28, 33, 27, 0.08);
+        --price: #1f5a43;
+        --price-bg: rgba(214, 238, 225, 0.92);
+        --attention: #7b5a12;
+        --attention-bg: rgba(255, 239, 198, 0.96);
+        --claimed: #4b5068;
+        --claimed-bg: rgba(228, 229, 236, 0.9);
+        --success: #2f5e2d;
+        --success-bg: rgba(224, 240, 217, 0.98);
+        --info: #41513d;
+        --info-bg: rgba(236, 241, 232, 0.95);
+        --error: #8a4c2e;
+        --error-bg: rgba(249, 230, 220, 0.96);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+        color: var(--ink);
+        background:
+          radial-gradient(circle at top, rgba(215, 241, 204, 0.75), transparent 30%),
+          linear-gradient(180deg, var(--sand) 0%, var(--mist) 100%);
+      }
+
+      main {
+        width: min(100%, 760px);
+        margin: 0 auto;
+        padding: 20px 14px 48px;
+        display: grid;
+        gap: 18px;
+      }
+
+      .section {
+        display: grid;
+        gap: 12px;
+      }
+
+      .card,
+      .sheet {
+        border-radius: 24px;
+        background: rgba(255, 252, 245, 0.92);
+        box-shadow:
+          0 18px 40px rgba(78, 68, 40, 0.08),
+          inset 0 1px 0 rgba(255, 255, 255, 0.65);
+        padding: 18px;
+      }
+
+      .hero {
+        display: grid;
+        gap: 12px;
+      }
+
+      .eyebrow {
+        color: #6e7a67;
+        font-size: 0.9rem;
+      }
+
+      h1,
+      h2,
+      h3,
+      h4,
+      p {
+        margin: 0;
+      }
+
+      h1 {
+        font-size: 1.4rem;
+      }
+
+      h2 {
+        font-size: 1.1rem;
+      }
+
+      h3 {
+        font-size: 1rem;
+      }
+
+      .muted {
+        color: var(--ink-soft);
+        line-height: 1.55;
+      }
+
+      .row,
+      .button-row,
+      .post-meta,
+      .chip-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        padding: 6px 10px;
+        border-radius: 999px;
+        font-size: 0.9rem;
+      }
+
+      .category {
+        background: rgba(228, 236, 219, 0.95);
+        color: #31412b;
+      }
+
+      .status {
+        background: rgba(245, 235, 210, 0.9);
+        color: #775c16;
+      }
+
+      .claimed {
+        background: var(--claimed-bg);
+        color: var(--claimed);
+      }
+
+      .price {
+        background: var(--price-bg);
+        color: var(--price);
+      }
+
+      .attention {
+        background: var(--attention-bg);
+        color: var(--attention);
+      }
+
+      .swatches {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      .swatch {
+        border-radius: 18px;
+        overflow: hidden;
+        border: 1px solid var(--line);
+      }
+
+      .swatch-color {
+        height: 64px;
+      }
+
+      .swatch-copy {
+        padding: 10px 12px;
+        background: rgba(255, 255, 255, 0.72);
+        font-size: 0.9rem;
+      }
+
+      .type-grid {
+        display: grid;
+        gap: 14px;
+      }
+
+      .type-row {
+        display: grid;
+        gap: 4px;
+        padding: 14px 16px;
+        border-radius: 18px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.58);
+      }
+
+      .type-kicker {
+        color: #70806a;
+        font-size: 0.82rem;
+      }
+
+      .display {
+        font-size: 1.35rem;
+        font-weight: 600;
+      }
+
+      .heading {
+        font-size: 1.08rem;
+        font-weight: 600;
+      }
+
+      .body {
+        font-size: 0.98rem;
+      }
+
+      .meta {
+        font-size: 0.86rem;
+        color: #6d7868;
+      }
+
+      button {
+        font: inherit;
+        border: 0;
+        border-radius: 999px;
+        min-height: 46px;
+        padding: 0 18px;
+      }
+
+      .primary {
+        background: var(--moss);
+        color: #f8fbf2;
+      }
+
+      .secondary {
+        background: rgba(224, 235, 217, 0.95);
+        color: #22311f;
+      }
+
+      .ghost {
+        background: rgba(255, 255, 255, 0.7);
+        color: #43503f;
+      }
+
+      .post-card,
+      .ask-card,
+      .detail-demo {
+        display: grid;
+        gap: 10px;
+      }
+
+      .post-footer {
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+        flex-wrap: wrap;
+        font-size: 0.9rem;
+        color: #5b6656;
+      }
+
+      .ask-card {
+        background: rgba(247, 250, 243, 0.9);
+      }
+
+      .ask-preview {
+        display: grid;
+        gap: 10px;
+      }
+
+      .sheet {
+        max-width: 520px;
+      }
+
+      .sheet-handle {
+        width: 52px;
+        height: 5px;
+        border-radius: 999px;
+        background: rgba(120, 132, 115, 0.32);
+        margin: 0 auto 12px;
+      }
+
+      .sheet-top {
+        display: flex;
+        justify-content: space-between;
+        align-items: start;
+        gap: 12px;
+      }
+
+      .status-strip {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+        padding: 12px;
+        border-radius: 18px;
+        background: rgba(243, 247, 239, 0.9);
+      }
+
+      .status-strip span {
+        color: #6d7768;
+        font-size: 0.82rem;
+      }
+
+      .status-strip strong {
+        display: block;
+        margin-top: 4px;
+      }
+
+      .price-toggle-row {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+      }
+
+      .toggle {
+        min-height: 42px;
+        border-radius: 14px;
+        border: 1px solid rgba(129, 146, 120, 0.22);
+        background: rgba(255, 255, 255, 0.84);
+        color: #4f5f49;
+      }
+
+      .toggle.active {
+        border-color: rgba(40, 72, 53, 0.26);
+        background: rgba(219, 236, 225, 0.9);
+        color: #203624;
+      }
+
+      .toast-stack {
+        display: grid;
+        gap: 10px;
+      }
+
+      .toast {
+        display: grid;
+        grid-template-columns: 10px 1fr;
+        gap: 10px;
+        align-items: start;
+        padding: 12px 14px;
+        border-radius: 18px;
+        box-shadow: 0 16px 36px rgba(24, 33, 23, 0.12);
+      }
+
+      .toast-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 999px;
+        margin-top: 4px;
+      }
+
+      .toast.info {
+        background: var(--info-bg);
+        color: var(--info);
+      }
+
+      .toast.info .toast-dot {
+        background: #7a8b73;
+      }
+
+      .toast.success {
+        background: var(--success-bg);
+        color: var(--success);
+      }
+
+      .toast.success .toast-dot {
+        background: #4a8a42;
+      }
+
+      .toast.error {
+        background: var(--error-bg);
+        color: var(--error);
+      }
+
+      .toast.error .toast-dot {
+        background: #be6f46;
+      }
+
+      .lane-grid {
+        display: grid;
+        gap: 12px;
+      }
+
+      .phone-frame {
+        width: min(100%, 390px);
+        margin: 0 auto;
+        padding: 14px;
+        border-radius: 38px;
+        background:
+          linear-gradient(180deg, #2d332c 0%, #131812 100%);
+        box-shadow:
+          0 30px 60px rgba(31, 35, 26, 0.28),
+          inset 0 1px 0 rgba(255, 255, 255, 0.08);
+      }
+
+      .phone-screen {
+        overflow: hidden;
+        border-radius: 28px;
+        background:
+          radial-gradient(circle at top, rgba(215, 241, 204, 0.72), transparent 28%),
+          linear-gradient(180deg, var(--sand) 0%, var(--mist) 100%);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+      }
+
+      .phone-notch {
+        width: 118px;
+        height: 24px;
+        margin: 8px auto 2px;
+        border-radius: 999px;
+        background: rgba(21, 24, 18, 0.92);
+      }
+
+      .phone-shell {
+        display: grid;
+        gap: 14px;
+        padding: 10px 12px 16px;
+      }
+
+      .phone-statusbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-size: 0.78rem;
+        color: #52604d;
+        padding: 0 4px;
+      }
+
+      .wechat-bar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        padding: 4px 2px 0;
+      }
+
+      .wechat-title {
+        display: grid;
+        gap: 2px;
+      }
+
+      .wechat-title strong {
+        font-size: 1rem;
+      }
+
+      .wechat-title span {
+        font-size: 0.78rem;
+        color: #73806e;
+      }
+
+      .phone-home-card {
+        display: grid;
+        gap: 12px;
+        padding: 16px;
+        border-radius: 24px;
+        background: rgba(255, 252, 245, 0.9);
+        box-shadow:
+          0 16px 34px rgba(78, 68, 40, 0.08),
+          inset 0 1px 0 rgba(255, 255, 255, 0.65);
+      }
+
+      .phone-section-title {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 10px;
+      }
+
+      .phone-section-title span {
+        font-size: 0.82rem;
+        color: #74806e;
+      }
+
+      .mini-post-card,
+      .mini-ask-card {
+        display: grid;
+        gap: 8px;
+        padding: 14px;
+        border-radius: 20px;
+        border: 1px solid var(--line);
+      }
+
+      .mini-post-card {
+        background: rgba(255, 255, 255, 0.72);
+      }
+
+      .mini-ask-card {
+        background: rgba(244, 248, 239, 0.94);
+      }
+
+      .mini-title {
+        font-size: 1rem;
+        font-weight: 600;
+      }
+
+      .mini-copy {
+        font-size: 0.9rem;
+        line-height: 1.5;
+        color: #586454;
+      }
+
+      .mini-meta {
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+        flex-wrap: wrap;
+        font-size: 0.82rem;
+        color: #6b7767;
+      }
+
+      .preview-strip {
+        display: grid;
+        gap: 8px;
+      }
+
+      .preview-strip .mini-ask-card {
+        padding: 12px 14px;
+      }
+
+      .phone-tabs {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 8px;
+      }
+
+      .phone-tab {
+        min-height: 36px;
+        border-radius: 14px;
+        display: grid;
+        place-items: center;
+        font-size: 0.84rem;
+        color: #5d6858;
+        background: rgba(255, 255, 255, 0.55);
+      }
+
+      .phone-tab.active {
+        background: rgba(220, 236, 214, 0.92);
+        color: #243320;
+        font-weight: 600;
+      }
+
+      .phone-cta {
+        position: sticky;
+        bottom: 0;
+        padding-top: 4px;
+      }
+
+      .phone-cta button {
+        width: 100%;
+      }
+
+      .phone-bottom-hint {
+        width: 130px;
+        height: 5px;
+        margin: 8px auto 0;
+        border-radius: 999px;
+        background: rgba(41, 49, 40, 0.22);
+      }
+
+      .phone-sheet {
+        padding: 16px;
+        border-radius: 24px;
+        background: rgba(255, 252, 245, 0.96);
+        box-shadow:
+          0 18px 38px rgba(50, 46, 37, 0.14),
+          inset 0 1px 0 rgba(255, 255, 255, 0.75);
+      }
+
+      .thread-stack {
+        display: grid;
+        gap: 10px;
+      }
+
+      .thread-reply {
+        display: grid;
+        gap: 6px;
+        padding: 12px 0 0 12px;
+        border-left: 2px solid rgba(120, 138, 113, 0.18);
+      }
+
+      .thread-reply.level-2 {
+        margin-left: 10px;
+      }
+
+      .thread-reply.level-3 {
+        margin-left: 20px;
+      }
+
+      .collapsed-reply {
+        display: grid;
+        gap: 4px;
+        padding: 10px 12px;
+        border-radius: 16px;
+        background: rgba(242, 238, 229, 0.92);
+        color: #5d6758;
+      }
+
+      .reply-action {
+        font-size: 0.82rem;
+        color: #3f5a39;
+      }
+
+      .lane-card {
+        border-radius: 20px;
+        border: 1px solid var(--line);
+        padding: 16px;
+        background: rgba(255, 255, 255, 0.6);
+      }
+
+      @media (min-width: 700px) {
+        .lane-grid,
+        .type-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="card hero">
+        <span class="eyebrow">Design System Preview</span>
+        <h1>楼里换物板</h1>
+        <p class="muted">面向單棟樓住戶、在微信內打開的 building memory + exchange layer。主線是换物，第二條 lane 是邻居问问。</p>
+        <div class="row">
+          <span class="pill category">Available-first</span>
+          <span class="pill price">温暖可信</span>
+          <span class="pill attention">邻里感</span>
+          <span class="pill claimed">手机优先</span>
+        </div>
+      </section>
+
+      <section class="card section">
+        <h2>Color Palette</h2>
+        <div class="swatches">
+          <div class="swatch">
+            <div class="swatch-color" style="background:#202f1e"></div>
+            <div class="swatch-copy">Moss · #202f1e</div>
+          </div>
+          <div class="swatch">
+            <div class="swatch-color" style="background:#d7f1cc"></div>
+            <div class="swatch-copy">Leaf · #d7f1cc</div>
+          </div>
+          <div class="swatch">
+            <div class="swatch-color" style="background:#fffaf5"></div>
+            <div class="swatch-copy">Paper · #fffaf5</div>
+          </div>
+          <div class="swatch">
+            <div class="swatch-color" style="background:#f7f2e7"></div>
+            <div class="swatch-copy">Warm Sand · #f7f2e7</div>
+          </div>
+          <div class="swatch">
+            <div class="swatch-color" style="background:rgba(214,238,225,0.92)"></div>
+            <div class="swatch-copy">Price signal</div>
+          </div>
+          <div class="swatch">
+            <div class="swatch-color" style="background:rgba(255,239,198,0.96)"></div>
+            <div class="swatch-copy">Attention signal</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card section">
+        <h2>Typography</h2>
+        <div class="type-grid">
+          <div class="type-row">
+            <span class="type-kicker">Hero / page title</span>
+            <div class="display">楼里的东西，不该再沉底。</div>
+            <span class="meta">1.35rem / 600 / PingFang SC</span>
+          </div>
+          <div class="type-row">
+            <span class="type-kicker">Section heading</span>
+            <div class="heading">邻居问问</div>
+            <span class="meta">1.08rem / 600</span>
+          </div>
+          <div class="type-row">
+            <span class="type-kicker">Body</span>
+            <div class="body">白色书架，拆开后可进电梯，今天晚上可自取。</div>
+            <span class="meta">0.98rem / line-height 1.55</span>
+          </div>
+          <div class="type-row">
+            <span class="type-kicker">Meta</span>
+            <div class="meta">林阿姨 · 12A · 3月31日 19:20</div>
+            <span class="meta">0.86rem / muted</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="card section">
+        <h2>Pills & Buttons</h2>
+        <div class="chip-row">
+          <span class="pill category">家具</span>
+          <span class="pill status">可联系</span>
+          <span class="pill claimed">已认领</span>
+          <span class="pill price">转让 ¥80</span>
+          <span class="pill attention">你已表达兴趣</span>
+        </div>
+        <div class="button-row">
+          <button class="primary">我感兴趣</button>
+          <button class="secondary">复制TA微信号</button>
+          <button class="ghost">查看讨论</button>
+        </div>
+      </section>
+
+      <section class="card section">
+        <h2>WeChat 内真实视窗感</h2>
+        <p class="muted">這一段不是 token 展示，而是模擬住戶在微信內打開時，實際看到的節奏。首頁保住 `Available-first`，問問只露一個次級 preview。</p>
+        <div class="phone-frame">
+          <div class="phone-screen">
+            <div class="phone-notch"></div>
+            <div class="phone-shell">
+              <div class="phone-statusbar">
+                <span>12:43</span>
+                <span>5G · 86%</span>
+              </div>
+
+              <div class="wechat-bar">
+                <button class="ghost" style="min-height: 34px; padding: 0 14px;">返回</button>
+                <div class="wechat-title">
+                  <strong>楼里换物板</strong>
+                  <span>微信内打开 · 深圳住户专用</span>
+                </div>
+                <button class="ghost" style="min-height: 34px; padding: 0 14px;">···</button>
+              </div>
+
+              <div class="phone-tabs">
+                <div class="phone-tab active">可拿走</div>
+                <div class="phone-tab">求物</div>
+                <div class="phone-tab">完成记录</div>
+              </div>
+
+              <section class="phone-home-card">
+                <div class="phone-section-title">
+                  <div>
+                    <span class="eyebrow">首页主视图</span>
+                    <h3>先看楼里现在有什么</h3>
+                  </div>
+                  <span>今天更新 6 条</span>
+                </div>
+
+                <article class="mini-post-card">
+                  <div class="post-meta">
+                    <span class="pill category">家具</span>
+                    <span class="pill price">转让 ¥80</span>
+                    <span class="pill attention">你已表达兴趣</span>
+                  </div>
+                  <div class="mini-title">九成新书架</div>
+                  <div class="mini-copy">白色书架，拆开后可进电梯，今晚可自取。先表达兴趣，再复制对方微信号。</div>
+                  <div class="mini-meta">
+                    <span>林阿姨 · 12A</span>
+                    <span>2 人感兴趣</span>
+                  </div>
+                </article>
+
+                <div class="preview-strip">
+                  <div class="phone-section-title">
+                    <div>
+                      <span class="eyebrow">邻居问问 preview</span>
+                      <h3>楼里最近在问什么</h3>
+                    </div>
+                    <span>点进看看</span>
+                  </div>
+
+                  <article class="mini-ask-card">
+                    <div class="mini-title">阳台位能放多深的洗衣机？</div>
+                    <div class="mini-meta">
+                      <span>5 条回复</span>
+                      <span>12 分钟前更新</span>
+                    </div>
+                  </article>
+
+                  <article class="mini-ask-card">
+                    <div class="mini-title">搬家当天电梯需要提前报备吗？</div>
+                    <div class="mini-meta">
+                      <span>3 条回复</span>
+                      <span>刚刚更新</span>
+                    </div>
+                  </article>
+                </div>
+              </section>
+
+              <div class="phone-cta">
+                <button class="primary">发布闲置 / 发布求物</button>
+              </div>
+
+              <div class="phone-bottom-hint"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="lane-grid">
+        <section class="card post-card">
+          <div class="post-meta">
+            <span class="pill category">家具</span>
+            <span class="pill price">转让 ¥80</span>
+            <span class="pill status">可联系</span>
+          </div>
+          <div class="pill attention">你已表达兴趣</div>
+          <h2>九成新书架</h2>
+          <p class="muted">白色书架，拆开后可进电梯，今天晚上可自取。</p>
+          <div class="post-footer">
+            <span>林阿姨 · 12A</span>
+            <span>2 人感兴趣</span>
+          </div>
+        </section>
+
+        <section class="card ask-card">
+          <div class="post-meta">
+            <span class="pill category">设备家电</span>
+            <span class="pill claimed">3 条回复</span>
+          </div>
+          <h2>阳台位能放多深的洗衣机？</h2>
+          <p class="muted">首頁 preview 只露問題，不露完整回覆，用回覆數與最近更新時間表達活躍感。</p>
+          <div class="post-footer">
+            <span>周周 · 05C</span>
+            <span>刚刚更新</span>
+          </div>
+        </section>
+      </section>
+
+      <section class="card section">
+        <h2>Composer Controls</h2>
+        <div class="lane-grid">
+          <div class="lane-card">
+            <span class="eyebrow">闲置 / 求物</span>
+            <div class="price-toggle-row" style="margin-top: 10px;">
+              <button class="toggle active">免费送</button>
+              <button class="toggle">有偿转让</button>
+            </div>
+          </div>
+          <div class="lane-card">
+            <span class="eyebrow">求物心理价位</span>
+            <div class="price-toggle-row" style="margin-top: 10px;">
+              <button class="toggle active">价格可商量</button>
+              <button class="toggle">我有预算</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card section">
+        <h2>Detail Sheet</h2>
+        <div class="sheet detail-demo">
+          <div class="sheet-handle"></div>
+          <div class="sheet-top">
+            <div>
+              <span class="eyebrow">闲置详情</span>
+              <h3>九成新书架</h3>
+            </div>
+            <button class="ghost">关闭</button>
+          </div>
+          <div class="post-meta">
+            <span class="pill category">家具</span>
+            <span class="pill price">转让 ¥80</span>
+            <span class="pill status">可联系</span>
+          </div>
+          <div class="status-strip">
+            <div>
+              <span>当前状态</span>
+              <strong>还可联系</strong>
+            </div>
+            <div>
+              <span>下一步</span>
+              <strong>先表达兴趣再联系</strong>
+            </div>
+          </div>
+          <p class="muted">白色书架，拆开后可进电梯，今天晚上可自取。detail 先講狀態，再講內容，再講 CTA。</p>
+          <div class="button-row">
+            <button class="primary">我感兴趣</button>
+            <button class="secondary">复制TA微信号</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="card section">
+        <h2>手机 Detail / 问问 Thread</h2>
+        <div class="lane-grid">
+          <div class="phone-frame">
+            <div class="phone-screen">
+              <div class="phone-notch"></div>
+              <div class="phone-shell">
+                <div class="phone-statusbar">
+                  <span>12:43</span>
+                  <span>微信内 · 安全区</span>
+                </div>
+                <div class="phone-sheet">
+                  <div class="sheet-handle"></div>
+                  <div class="sheet-top">
+                    <div>
+                      <span class="eyebrow">闲置详情</span>
+                      <h3>九成新书架</h3>
+                    </div>
+                    <button class="ghost">关闭</button>
+                  </div>
+                  <div class="post-meta">
+                    <span class="pill category">家具</span>
+                    <span class="pill price">转让 ¥80</span>
+                    <span class="pill status">已被选择</span>
+                  </div>
+                  <div class="status-strip">
+                    <div>
+                      <span>当前状态</span>
+                      <strong>你已跟进</strong>
+                    </div>
+                    <div>
+                      <span>下一步</span>
+                      <strong>复制微信号联系TA</strong>
+                    </div>
+                  </div>
+                  <div class="toast success">
+                    <span class="toast-dot"></span>
+                    <div>
+                      <strong>你已在跟进中</strong>
+                      <p>先复制对方微信号，再回到微信里联系。</p>
+                    </div>
+                  </div>
+                  <div class="button-row">
+                    <button class="primary">我感兴趣</button>
+                    <button class="secondary">复制TA微信号</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="phone-frame">
+            <div class="phone-screen">
+              <div class="phone-notch"></div>
+              <div class="phone-shell">
+                <div class="phone-statusbar">
+                  <span>12:43</span>
+                  <span>楼内讨论 · 3 层折叠</span>
+                </div>
+                <section class="phone-home-card">
+                  <span class="eyebrow">邻居问问详情</span>
+                  <h3>阳台位能放多深的洗衣机？</h3>
+                  <div class="mini-meta">
+                    <span>周周 · 05C</span>
+                    <span>5 条回复 · 刚刚更新</span>
+                  </div>
+
+                  <div class="thread-stack">
+                    <div class="thread-reply">
+                      <strong>阿萍</strong>
+                      <div class="mini-copy">我家是 58cm 深，海尔那台能放进去，后面只剩一点点空间。</div>
+                      <span class="reply-action">回复TA</span>
+                    </div>
+
+                    <div class="thread-reply level-2">
+                      <strong>老陈</strong>
+                      <div class="mini-copy">同意，最好量一下门框和地漏位置，不然会差那两厘米。</div>
+                    </div>
+
+                    <div class="thread-reply level-3">
+                      <div class="collapsed-reply">
+                        <strong>展开 2 条更深回复</strong>
+                        <span>有人补充了具体型号和安装余量，先露摘要，不把手机屏塞满。</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <button class="ghost">我来补充</button>
+                </section>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card section">
+        <h2>Toast States</h2>
+        <div class="toast-stack">
+          <div class="toast info">
+            <span class="toast-dot"></span>
+            <div>
+              <strong>正在处理中</strong>
+              <p>正在确认认领…</p>
+            </div>
+          </div>
+          <div class="toast success">
+            <span class="toast-dot"></span>
+            <div>
+              <strong>操作成功</strong>
+              <p>已确认给 周周。下一步可以移入完成记录。</p>
+            </div>
+          </div>
+          <div class="toast error">
+            <span class="toast-dot"></span>
+            <div>
+              <strong>请处理一下</strong>
+              <p>请先选择要确认的邻居。</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card section">
+        <h2>Lane Mood</h2>
+        <div class="lane-grid">
+          <div class="lane-card">
+            <span class="eyebrow">换物</span>
+            <p class="muted">強調狀態、條件、價格、下一步。像一張整理過的樓內告示。</p>
+          </div>
+          <div class="lane-card" style="background: rgba(247, 250, 243, 0.9);">
+            <span class="eyebrow">邻居问问</span>
+            <p class="muted">更有社交感、更重文字，但仍然要克制，不能變成另一個朋友圈。</p>
+          </div>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

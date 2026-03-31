@@ -190,6 +190,14 @@ a {
   color: #f8fbf2;
 }
 
+.primary-button:disabled,
+.secondary-button:disabled,
+.ghost-button:disabled,
+.switch:disabled,
+.tab:disabled {
+  opacity: 0.72;
+}
+
 .secondary-button {
   display: inline-grid;
   place-items: center;
@@ -671,6 +679,24 @@ a {
   line-height: 1.45;
 }
 
+.status-dot,
+.loading-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+}
+
+.status-dot {
+  margin-top: 4px;
+  background: currentColor;
+}
+
+.loading-dot {
+  border: 2px solid rgba(46, 59, 43, 0.18);
+  border-top-color: #31412b;
+  animation: spin-dot 0.72s linear infinite;
+}
+
 @keyframes toast-slide-in {
   from {
     opacity: 0;
@@ -680,6 +706,16 @@ a {
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+@keyframes spin-dot {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
   }
 }
 
@@ -758,6 +794,55 @@ a {
   color: #61715e;
   line-height: 1.55;
   font-size: 0.9rem;
+}
+
+.composer-submit-status {
+  display: grid;
+  grid-template-columns: 14px 1fr;
+  gap: 10px;
+  align-items: start;
+  padding: 13px 14px;
+  border-radius: 18px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45);
+}
+
+.composer-submit-status.info {
+  background: rgba(240, 245, 235, 0.96);
+  color: #2d3a2a;
+}
+
+.composer-submit-status.error {
+  background: rgba(249, 233, 227, 0.96);
+  color: #8c3427;
+}
+
+.composer-submit-status strong,
+.composer-submit-status span {
+  display: block;
+}
+
+.composer-submit-status strong {
+  font-size: 0.92rem;
+}
+
+.composer-submit-status span {
+  font-size: 0.86rem;
+  line-height: 1.45;
+}
+
+.button-busy-copy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.button-busy-copy .loading-dot {
+  width: 14px;
+  height: 14px;
+  margin-top: 0;
+  border-color: rgba(248, 251, 242, 0.28);
+  border-top-color: #f8fbf2;
 }
 
 .picker-close {

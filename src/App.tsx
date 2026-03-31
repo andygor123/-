@@ -119,6 +119,7 @@ function App() {
   const [detailNotice, setDetailNotice] = useState<{ tone: 'info' | 'success' | 'error'; message: string } | null>(
     null,
   )
+  const [composerNotice, setComposerNotice] = useState<{ tone: 'info' | 'error'; message: string } | null>(null)
   const [detailAction, setDetailAction] = useState<'interest' | 'claim' | 'archive' | null>(null)
   const [busy, setBusy] = useState(false)
   const [askBusy, setAskBusy] = useState(false)
@@ -267,10 +268,12 @@ function App() {
   }
 
   function resetComposer() {
+    if (busy) return
     setShowComposerPicker(false)
     setComposerMode(null)
     setShowOptionalFields(false)
     setFormError('')
+    setComposerNotice(null)
     setPostDraft({
       title: '',
       category: categoryOptions[0],
@@ -291,6 +294,7 @@ function App() {
     setShowComposerPicker(false)
     setComposerMode(type)
     setFormError('')
+    setComposerNotice(null)
   }
 
   async function createPost(event: FormEvent) {
@@ -319,6 +323,17 @@ function App() {
     if (postDraft.twoPersonCarry) fitMetadata.twoPersonCarry = true
 
     setBusy(true)
+    setComposerNotice({
+      tone: 'info',
+      message:
+        composerMode === 'available'
+          ? '正在发布闲置，图片上传完成后会自动回到列表。'
+          : '正在发布求物，发出去后邻居马上就能看到。',
+    })
+    setDetailNotice({
+      tone: 'info',
+      message: composerMode === 'available' ? '正在发布闲置…' : '正在发布求物…',
+    })
     try {
       let imageUrl = postDraft.imageUrl.trim() || undefined
       if (composerMode === 'available' && postDraft.imageFile) {
@@ -339,9 +354,21 @@ function App() {
 
       setActiveTab(composerMode)
       await refreshPosts(composerMode)
+      setDetailNotice({
+        tone: 'success',
+        message: composerMode === 'available' ? '闲置已发布，邻居现在能看到它了。' : '求物已发出，楼里的邻居现在能接住这个需求。',
+      })
       resetComposer()
     } catch (error) {
       setFormError(error instanceof Error ? error.message : '发布失败，请稍后再试。')
+      setComposerNotice({
+        tone: 'error',
+        message: error instanceof Error ? error.message : '发布失败，请稍后再试。',
+      })
+      setDetailNotice({
+        tone: 'error',
+        message: composerMode === 'available' ? '发布闲置失败，请稍后再试。' : '发布求物失败，请稍后再试。',
+      })
     } finally {
       setBusy(false)
     }
@@ -905,22 +932,31 @@ function App() {
       ) : null}
 
       {composerMode ? (
-        <div className="overlay" onClick={resetComposer}>
+        <div className="overlay" onClick={() => (!busy ? resetComposer() : undefined)}>
           <section className="composer-sheet" onClick={(event) => event.stopPropagation()}>
             <div className="sheet-handle" aria-hidden="true" />
             <div className="composer-header">
               <h3>{composerMode === 'available' ? '发布闲置' : '发布求物'}</h3>
-              <button className="ghost-button" onClick={resetComposer}>关闭</button>
+              <button className="ghost-button" onClick={resetComposer} disabled={busy}>关闭</button>
             </div>
             <div className="composer-switch">
-              <button className={composerMode === 'available' ? 'switch active' : 'switch'} onClick={() => setComposerMode('available')}>
+              <button className={composerMode === 'available' ? 'switch active' : 'switch'} onClick={() => setComposerMode('available')} disabled={busy}>
                 发布闲置
               </button>
-              <button className={composerMode === 'wanted' ? 'switch active' : 'switch'} onClick={() => setComposerMode('wanted')}>
+              <button className={composerMode === 'wanted' ? 'switch active' : 'switch'} onClick={() => setComposerMode('wanted')} disabled={busy}>
                 发布求物
               </button>
             </div>
             <form onSubmit={createPost} className="stack">
+              {composerNotice ? (
+                <div className={`composer-submit-status ${composerNotice.tone}`} role="status" aria-live="polite">
+                  {composerNotice.tone === 'info' ? <span className="loading-dot" aria-hidden="true" /> : <span className="status-dot" aria-hidden="true" />}
+                  <div>
+                    <strong>{composerNotice.tone === 'info' ? '正在处理中' : '发布遇到一点问题'}</strong>
+                    <span>{composerNotice.message}</span>
+                  </div>
+                </div>
+              ) : null}
               {composerMode === 'wanted' ? (
                 <div className="composer-intro wanted-intro">
                   <strong>把需求写清楚一点，邻居才更容易接上你。</strong>
@@ -1101,7 +1137,12 @@ function App() {
               ) : null}
               {formError ? <p className="error-text">{formError}</p> : null}
               <button className="primary-button" type="submit" disabled={busy}>
-                {busy ? '提交中…' : composerMode === 'available' ? '发布闲置' : '发布求物'}
+                {busy ? (
+                  <span className="button-busy-copy">
+                    <span className="loading-dot" aria-hidden="true" />
+                    <span>{composerMode === 'available' ? '正在发布闲置…' : '正在发布求物…'}</span>
+                  </span>
+                ) : composerMode === 'available' ? '发布闲置' : '发布求物'}
               </button>
             </form>
           </section>
