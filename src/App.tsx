@@ -18,6 +18,7 @@ import {
 import type { AskReply, AskThreadDetail, AskThreadSummary, FitMetadata, PostItem, PostType, QuestionCategory, ResidentProfile, TabKey } from './types'
 
 type ComposerMode = PostType | null
+type HomeLane = 'exchange' | 'ask'
 
 const categoryOptions = ['家具', '家电', '家居', '母婴', '数码', '其他']
 const askCategoryOptions: Array<{ value: QuestionCategory; label: string }> = [
@@ -109,6 +110,7 @@ function App() {
     wechatHandle: '',
   }))
   const [activeTab, setActiveTab] = useState<TabKey>('available')
+  const [homeLane, setHomeLane] = useState<HomeLane>('exchange')
   const [selectedPostId, setSelectedPostId] = useState<string | null>(null)
   const [showComposerPicker, setShowComposerPicker] = useState(false)
   const [composerMode, setComposerMode] = useState<ComposerMode>(null)
@@ -188,6 +190,29 @@ function App() {
       cancelled = true
     }
   }, [activeTab, verified])
+
+  useEffect(() => {
+    if (!verified || homeLane !== 'ask') return
+
+    let cancelled = false
+    async function fetchAskThreads() {
+      try {
+        const result = await loadAskThreads()
+        if (!cancelled) {
+          setAskThreads(result.threads)
+        }
+      } catch {
+        if (!cancelled) {
+          setFormError('邻居问问加载失败，请稍后再试。')
+        }
+      }
+    }
+
+    void fetchAskThreads()
+    return () => {
+      cancelled = true
+    }
+  }, [homeLane, verified])
 
   const currentProfile = profile
 
@@ -751,7 +776,11 @@ function App() {
         <div className="topbar-copy">
           <span className="eyebrow">同栋楼 · 微信内 H5</span>
           <h1>楼里换物板</h1>
-          <p className="topbar-subtitle">把会沉底的闲置和求物，整理成一眼能扫完的楼内板。</p>
+          <p className="topbar-subtitle">
+            {homeLane === 'exchange'
+              ? '换物和求物继续服务楼内供需，适合快速扫完今天有什么。'
+              : '邻居问问把楼里最近的高相关问题拉出来，不用再回微信群里翻记录。'}
+          </p>
         </div>
         <button className="ghost-button profile-chip" onClick={() => setSelectedPostId(null)}>
           {currentProfile.nickname} · {currentProfile.roomFragment}
@@ -760,13 +789,27 @@ function App() {
 
       <section className="hero-card">
         <div>
-          <h2>先看现在有什么，再决定要不要发。</h2>
-          <p>默认看闲置，求物单独一栏，完成记录轻量保留。</p>
+          <h2>{homeLane === 'exchange' ? '换物和求物，是楼里的第一条信息线。' : '邻居问问，把楼里的经验重新浮上来。'}</h2>
+          <p>
+            {homeLane === 'exchange'
+              ? '闲置、求物、完成记录放在同一条换物线里，适合直接判断要不要联系。'
+              : '洗衣机尺寸、搬家停车、服务推荐，都可以在这里先看到最新讨论。'}
+          </p>
         </div>
         <div className="hero-highlights" aria-label="楼内信息提示">
-          <span>微信群会沉底</span>
-          <span>这里能一眼看清</span>
-          <span>适合手机内快速扫完</span>
+          {homeLane === 'exchange' ? (
+            <>
+              <span>闲置和求物同级</span>
+              <span>状态比微信群更清楚</span>
+              <span>适合手机内快速扫完</span>
+            </>
+          ) : (
+            <>
+              <span>楼内高相关问题</span>
+              <span>最近更新更容易看见</span>
+              <span>让经验别再沉底</span>
+            </>
+          )}
         </div>
         <div className="hero-metrics">
           <div>
@@ -781,9 +824,24 @@ function App() {
             <strong>{posts.filter((post) => post.status === 'removed').length}</strong>
             <span>已完成</span>
           </div>
+          <div>
+            <strong>{askPreviewThreads.length > 0 ? askPreviewThreads[0].replyCount + askPreviewThreads.length : askThreads.length}</strong>
+            <span>最近问问热度</span>
+          </div>
         </div>
       </section>
 
+      <nav className="lane-switcher">
+        <button className={homeLane === 'exchange' ? 'tab active' : 'tab'} onClick={() => setHomeLane('exchange')}>
+          换物
+        </button>
+        <button className={homeLane === 'ask' ? 'tab active' : 'tab'} onClick={() => setHomeLane('ask')}>
+          问问
+        </button>
+      </nav>
+
+      {homeLane === 'exchange' ? (
+        <>
       <nav className="tabbar">
         <button className={activeTab === 'available' ? 'tab active' : 'tab'} onClick={() => setActiveTab('available')}>
           闲置
@@ -863,25 +921,36 @@ function App() {
           ))}
         </section>
       )}
-
-      {activeTab === 'available' ? (
-        <section className="ask-preview-section">
-          <div className="ask-preview-head">
+        </>
+      ) : (
+        <section className="ask-home-section">
+          <div className="ask-preview-head ask-home-head">
             <div>
               <span className="eyebrow">邻居问问</span>
-              <h3>楼里的问题，也别再沉到底下。</h3>
-              <p>洗衣机尺寸、搬家停车、保洁推荐，这里先看最近大家在问什么。</p>
+              <h3>楼里最近有人在问什么？</h3>
+              <p>把搬家、设备、服务和住户经验放回首页，不用再靠记忆翻群消息。</p>
             </div>
-            <button className="ghost-button" onClick={() => void openAskFeed()}>
-              {askBusy && showAskFeed ? '打开中…' : '去问问'}
-            </button>
+            <div className="ask-home-actions">
+              <button className="primary-button" onClick={() => void openAskFeed()}>
+                {askBusy && showAskFeed ? '打开中…' : '进入问问'}
+              </button>
+              <button
+                className="ghost-button"
+                onClick={() => {
+                  setShowAskFeed(true)
+                  setSelectedAskThread(null)
+                }}
+              >
+                我也想问
+              </button>
+            </div>
           </div>
-          <div className="ask-preview-list">
-            {askPreviewThreads.map((thread) => (
+          <div className="ask-home-list">
+            {(askThreads.length > 0 ? askThreads : askPreviewThreads).map((thread) => (
               <button
                 key={thread.id}
                 type="button"
-                className="ask-preview-card"
+                className="ask-feed-card ask-home-card"
                 onClick={() => void openAskFeed().then(() => openAskThread(thread.id))}
               >
                 <div className="ask-preview-topline">
@@ -889,16 +958,17 @@ function App() {
                   <span>{thread.replyCount} 条回复</span>
                 </div>
                 <strong>{thread.title}</strong>
+                {thread.body ? <p>{thread.body}</p> : null}
                 <div className="ask-preview-meta">
-                  <span>{thread.author.nickname}</span>
+                  <span>{thread.author.nickname} · {thread.author.roomFragment}</span>
                   <span>{formatTime(thread.lastActivityAt)}</span>
                 </div>
-                <span className="ask-card-entry">点进看看</span>
+                <span className="ask-card-entry">查看讨论</span>
               </button>
             ))}
           </div>
         </section>
-      ) : null}
+      )}
 
       <button className="fab" onClick={() => setShowComposerPicker(true)}>
         发布
