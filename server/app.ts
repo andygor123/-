@@ -16,6 +16,11 @@ import {
 } from './store.ts'
 
 const BUILDING_CODE = process.env.BUILDING_CODE?.trim().toUpperCase() || 'SZHOME'
+const API_PUBLIC_BASE_URL = process.env.API_PUBLIC_BASE_URL?.trim().replace(/\/$/, '') || ''
+const CORS_ALLOWED_ORIGINS = (process.env.CORS_ALLOWED_ORIGINS ?? '')
+  .split(',')
+  .map((value) => value.trim())
+  .filter(Boolean)
 const ROOT = process.cwd()
 const DATA_ROOT = process.env.DATA_DIR
   ? path.resolve(process.env.DATA_DIR)
@@ -32,6 +37,19 @@ const entryTickets = new Map<string, number>()
 
 fs.mkdirSync(UPLOAD_DIR, { recursive: true })
 fs.mkdirSync(TEMP_UPLOAD_DIR, { recursive: true })
+
+function requestPublicBaseUrl(req: express.Request) {
+  void req
+  return API_PUBLIC_BASE_URL
+}
+
+function absoluteUploadUrl(req: express.Request, imageUrl?: string | null) {
+  if (!imageUrl) return null
+  if (/^https?:\/\//i.test(imageUrl)) return imageUrl
+  if (!imageUrl.startsWith('/uploads/')) return imageUrl
+  const baseUrl = requestPublicBaseUrl(req)
+  return baseUrl ? `${baseUrl}${imageUrl}` : imageUrl
+}
 
 function applyPostLifecycle(store: ReturnType<typeof readStore>) {
   const now = Date.now()
@@ -57,7 +75,7 @@ function applyPostLifecycle(store: ReturnType<typeof readStore>) {
   return nextState
 }
 
-function listView(post: PostItem, users: ResidentProfile[], interestCount: number, viewerId?: string) {
+function listView(req: express.Request, post: PostItem, users: ResidentProfile[], interestCount: number, viewerId?: string) {
   const owner = users.find((user) => user.id === post.userId)
   const store = readStore()
   const alreadyInterested = viewerId
@@ -81,7 +99,7 @@ function listView(post: PostItem, users: ResidentProfile[], interestCount: numbe
     priceCny: post.priceCny ?? null,
     description: post.description ?? null,
     pickupNote: post.pickupNote ?? null,
-    imageUrl: post.imageUrl ?? null,
+    imageUrl: absoluteUploadUrl(req, post.imageUrl),
     fitMetadata: post.fitMetadataJson ?? null,
     interestUserIds: store.postInterests
       .filter((interest) => interest.postId === post.id)
@@ -131,11 +149,12 @@ function latestReplyPreview(threadId: string, replies: QuestionReply[], users: R
   }
 }
 
-function threadSummary(thread: QuestionThread, replies: QuestionReply[], users: ResidentProfile[]) {
+function threadSummary(req: express.Request, thread: QuestionThread, replies: QuestionReply[], users: ResidentProfile[]) {
   return {
     id: thread.id,
     title: thread.title,
     body: thread.body ?? null,
+    imageUrl: absoluteUploadUrl(req, thread.imageUrl),
     category: thread.category,
     author: residentIdentity(thread.userId, users),
     replyCount: thread.replyCount,
@@ -162,6 +181,29 @@ declare global {
 export function createApp() {
   const app = express()
   const upload = multer({ dest: TEMP_UPLOAD_DIR })
+
+  app.use((req, res, next) => {
+    const origin = req.header('origin')
+    const allowOrigin =
+      origin && CORS_ALLOWED_ORIGINS.includes(origin)
+        ? origin
+        : !origin && CORS_ALLOWED_ORIGINS.length === 0
+          ? '*'
+          : null
+
+    if (allowOrigin) {
+      res.header('Access-Control-Allow-Origin', allowOrigin)
+      res.header('Vary', 'Origin')
+      res.header('Access-Control-Allow-Headers', 'Content-Type, x-device-identity')
+      res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,OPTIONS')
+    }
+
+    if (req.method === 'OPTIONS') {
+      return res.sendStatus(204)
+    }
+
+    return next()
+  })
 
   app.use(express.json({ limit: '4mb' }))
   app.use(express.static(path.join(ROOT, 'public')))
@@ -325,6 +367,7 @@ export function createApp() {
     const payload = items
       .map((post) =>
         listView(
+          req,
           post,
           store.users,
           store.postInterests.filter((interest) => interest.postId === post.id).length,
@@ -364,6 +407,7 @@ export function createApp() {
     return res.json({
       post: {
         ...listView(
+          req,
           post,
           store.users,
           store.postInterests.filter((interest) => interest.postId === post.id).length,
@@ -389,15 +433,15 @@ export function createApp() {
     })
   })
 
-  app.get('/api/ask/threads', buildingAccessFromHeader(), (_req, res) => {
+  app.get('/api/ask/threads', buildingAccessFromHeader(), (req, res) => {
     const store = readStore()
-    const limit = Math.max(1, Math.min(20, Number(_req.query.limit ?? 20) || 20))
+    const limit = Math.max(1, Math.min(20, Number(req.query.limit ?? 20) || 20))
 
     const threads = store.questionThreads
       .filter((thread) => !thread.removedAt)
       .sort((left, right) => new Date(right.lastActivityAt).getTime() - new Date(left.lastActivityAt).getTime())
       .slice(0, limit)
-      .map((thread) => threadSummary(thread, store.questionReplies, store.users))
+      .map((thread) => threadSummary(req, thread, store.questionReplies, store.users))
 
     return res.json({ threads })
   })
@@ -427,7 +471,7 @@ export function createApp() {
 
     return res.json({
       thread: {
-        ...threadSummary(thread, store.questionReplies, store.users),
+        ...threadSummary(req, thread, store.questionReplies, store.users),
         replies,
       },
     })
@@ -437,6 +481,7 @@ export function createApp() {
     const user = req.user!
     const title = String(req.body?.title ?? '').trim()
     const body = String(req.body?.body ?? '').trim()
+    const imageUrl = String(req.body?.imageUrl ?? '').trim()
     const category = String(req.body?.category ?? '').trim() as QuestionCategory
 
     if (!title || !category || !askCategories.has(category)) {
@@ -449,6 +494,7 @@ export function createApp() {
       userId: user.id,
       title,
       body: body || undefined,
+      imageUrl: imageUrl || undefined,
       category,
       replyCount: 0,
       lastActivityAt: now,
@@ -462,7 +508,7 @@ export function createApp() {
     }))
 
     return res.status(201).json({
-      thread: threadSummary(thread, [], readStore().users),
+      thread: threadSummary(req, thread, [], readStore().users),
     })
   })
 
@@ -676,16 +722,17 @@ export function createApp() {
     return res.json({ post: updated.posts.find((item) => item.id === postId) })
   })
 
-  app.post('/api/uploads/sign', profileFromHeader(), (_req, res) => {
-    const user = _req.user!
+  app.post('/api/uploads/sign', profileFromHeader(), (req, res) => {
+    const user = req.user!
     const uploadToken = crypto.randomUUID()
     uploadTickets.set(uploadToken, {
       userId: user.id,
       expiresAt: Date.now() + UPLOAD_TOKEN_TTL_MS,
     })
+    const baseUrl = requestPublicBaseUrl(req)
     res.json({
-      uploadUrl: `/api/uploads/local/${uploadToken}`,
-      publicBaseUrl: `/uploads`,
+      uploadUrl: baseUrl ? `${baseUrl}/api/uploads/local/${uploadToken}` : `/api/uploads/local/${uploadToken}`,
+      publicBaseUrl: baseUrl ? `${baseUrl}/uploads` : '/uploads',
       uploadToken,
     })
   })
@@ -711,7 +758,7 @@ export function createApp() {
     uploadTickets.delete(token)
 
     return res.json({
-      publicUrl: `/uploads/${safeName}`,
+      publicUrl: absoluteUploadUrl(req, `/uploads/${safeName}`),
     })
   })
 

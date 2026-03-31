@@ -49,6 +49,7 @@ export interface QuestionThread {
   userId: string
   title: string
   body?: string
+  imageUrl?: string
   category: QuestionCategory
   replyCount: number
   lastActivityAt: string
@@ -190,6 +191,7 @@ export const seedState: StoreShape = {
       userId: 'resident-zhou',
       title: '阳台位能放多深的洗衣机？',
       body: '新搬来，怕买错尺寸，想问下有没有邻居实测过。',
+      imageUrl: '/sample-chair.svg',
       category: 'appliance',
       replyCount: 3,
       lastActivityAt: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
@@ -201,6 +203,7 @@ export const seedState: StoreShape = {
       userId: 'resident-chen',
       title: '最近有靠谱的保洁阿姨推荐吗？',
       body: '想找每周来一次的，最好是本楼有人用过的。',
+      imageUrl: '/sample-bookshelf.svg',
       category: 'service',
       replyCount: 2,
       lastActivityAt: new Date(Date.now() - 90 * 60 * 1000).toISOString(),
@@ -287,9 +290,33 @@ function ensureDataFile() {
   }
 }
 
+function normalizeStore(raw: Partial<StoreShape>): { state: StoreShape; changed: boolean } {
+  const state: StoreShape = {
+    users: Array.isArray(raw.users) ? raw.users : [],
+    posts: Array.isArray(raw.posts) ? raw.posts : [],
+    postInterests: Array.isArray(raw.postInterests) ? raw.postInterests : [],
+    questionThreads: Array.isArray(raw.questionThreads) ? raw.questionThreads : [],
+    questionReplies: Array.isArray(raw.questionReplies) ? raw.questionReplies : [],
+  }
+
+  const changed =
+    !Array.isArray(raw.users) ||
+    !Array.isArray(raw.posts) ||
+    !Array.isArray(raw.postInterests) ||
+    !Array.isArray(raw.questionThreads) ||
+    !Array.isArray(raw.questionReplies)
+
+  return { state, changed }
+}
+
 export function readStore(): StoreShape {
   ensureDataFile()
-  return JSON.parse(fs.readFileSync(DATA_FILE, 'utf-8')) as StoreShape
+  const raw = JSON.parse(fs.readFileSync(DATA_FILE, 'utf-8')) as Partial<StoreShape>
+  const { state, changed } = normalizeStore(raw)
+  if (changed) {
+    fs.writeFileSync(DATA_FILE, JSON.stringify(state, null, 2))
+  }
+  return state
 }
 
 export function writeStore(state: StoreShape) {

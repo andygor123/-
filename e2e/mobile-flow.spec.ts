@@ -12,7 +12,7 @@ test('mobile resident can enter, create available post, then see it in list', as
   await page.getByRole('button', { name: '进入本楼' }).click()
 
   await page.getByPlaceholder('例如：阿May').fill('阿May')
-  await page.getByPlaceholder('例如：12A').fill('12A')
+  await page.getByPlaceholder('例如：1609').fill('1609')
   await page.getByPlaceholder('例如：may12a').fill('may12a')
   await page.getByRole('button', { name: '保存并继续' }).click()
 

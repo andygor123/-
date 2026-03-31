@@ -5,6 +5,8 @@ import { seedState, writeStore } from './store.ts'
 import fs from 'node:fs'
 import path from 'node:path'
 
+const DATA_FILE = path.resolve(process.cwd(), '.context', 'data', 'app-state.json')
+
 describe('server app', () => {
   beforeEach(() => {
     writeStore(JSON.parse(JSON.stringify(seedState)))
@@ -191,6 +193,44 @@ describe('server app', () => {
     expect(response.body.threads[0].replyCount).toBeGreaterThan(0)
   })
 
+  it('creates ask thread with optional image url', async () => {
+    const app = createApp()
+
+    const response = await request(app)
+      .post('/api/ask/threads')
+      .set('x-device-identity', 'seed-lin')
+      .send({
+        title: '求问这个角落能放什么架子？',
+        body: '想找邻居实测一下。',
+        category: 'resident_experience',
+        imageUrl: '/uploads/test-corner.jpg',
+      })
+
+    expect(response.status).toBe(201)
+    expect(response.body.thread.imageUrl).toBe('/uploads/test-corner.jpg')
+  })
+
+  it('backfills older persisted stores that do not have ask arrays', async () => {
+    const legacyState = {
+      users: seedState.users,
+      posts: seedState.posts,
+      postInterests: seedState.postInterests,
+    }
+    fs.writeFileSync(DATA_FILE, JSON.stringify(legacyState, null, 2))
+
+    const app = createApp()
+    const response = await request(app)
+      .get('/api/ask/threads?limit=3')
+      .set('x-device-identity', 'seed-lin')
+
+    expect(response.status).toBe(200)
+    expect(response.body.threads).toEqual([])
+
+    const normalized = JSON.parse(fs.readFileSync(DATA_FILE, 'utf-8')) as Record<string, unknown>
+    expect(normalized.questionThreads).toEqual([])
+    expect(normalized.questionReplies).toEqual([])
+  })
+
   it('creates nested ask replies up to depth 3 and rejects depth 4', async () => {
     const app = createApp()
 
@@ -217,7 +257,7 @@ describe('server app', () => {
 
     const level4 = await request(app)
       .post('/api/ask/threads/thread-3/replies')
-      .set('x-device-identity', 'seed-ma')
+      .set('x-device-identity', 'seed-chen')
       .send({ body: '那我再问物业。', parentReplyId: level3.body.reply.id })
 
     expect(level4.status).toBe(400)

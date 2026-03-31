@@ -13,6 +13,6 @@ describe('App', () => {
     )
 
     render(<App />)
-    expect(await screen.findByText('楼里换物板')).toBeInTheDocument()
+    expect(await screen.findByText('楼里互助站')).toBeInTheDocument()
   })
 })

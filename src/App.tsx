@@ -142,9 +142,12 @@ function App() {
   const [askThreadDraft, setAskThreadDraft] = useState({
     title: '',
     body: '',
+    imageUrl: '',
+    imageFile: null as File | null,
     category: askCategoryOptions[0].value,
   })
   const [askReplyDraft, setAskReplyDraft] = useState('')
+  const [askImagePreviewUrl, setAskImagePreviewUrl] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -237,6 +240,7 @@ function App() {
     () => (selectedAskThread ? buildAskReplyChildren(selectedAskThread.replies, null) : []),
     [selectedAskThread],
   )
+  const askHomeThreads = askThreads.length > 0 ? askThreads : askPreviewThreads
   const currentReplyTarget = useMemo(
     () =>
       replyingToReplyId && selectedAskThread
@@ -471,16 +475,19 @@ function App() {
     }
   }
 
-  async function openAskFeed() {
+  async function openAskThreadDirect(threadId: string) {
     setShowAskFeed(true)
-    setSelectedAskThread(null)
     setAskBusy(true)
     try {
-      const result = await loadAskThreads()
-      setAskThreads(result.threads)
+      const [detail, list] = await Promise.all([loadAskThread(threadId), loadAskThreads()])
+      setAskThreads(list.threads)
+      setSelectedAskThread(detail.thread)
+      setReplyingToReplyId(null)
+      setAskReplyDraft('')
+      setExpandedAskReplyIds([])
       setFormError('')
     } catch (error) {
-      setFormError(error instanceof Error ? error.message : '邻居问问加载失败，请稍后再试。')
+      setFormError(error instanceof Error ? error.message : '帖子打开失败，请稍后再试。')
     } finally {
       setAskBusy(false)
     }
@@ -510,14 +517,22 @@ function App() {
 
     setAskBusy(true)
     try {
+      let imageUrl = askThreadDraft.imageUrl.trim() || undefined
+      if (askThreadDraft.imageFile) {
+        imageUrl = await uploadImage(askThreadDraft.imageFile)
+      }
+
       await createAskThread({
         title: askThreadDraft.title.trim(),
         body: askThreadDraft.body.trim() || undefined,
+        imageUrl,
         category: askThreadDraft.category,
       })
       setAskThreadDraft({
         title: '',
         body: '',
+        imageUrl: '',
+        imageFile: null,
         category: askCategoryOptions[0].value,
       })
       const [list, preview] = await Promise.all([loadAskThreads(), loadAskThreads(3, true)])
@@ -624,6 +639,20 @@ function App() {
   }, [postDraft.imageFile])
 
   useEffect(() => {
+    if (!askThreadDraft.imageFile) {
+      setAskImagePreviewUrl(null)
+      return
+    }
+
+    const nextPreviewUrl = URL.createObjectURL(askThreadDraft.imageFile)
+    setAskImagePreviewUrl(nextPreviewUrl)
+
+    return () => {
+      URL.revokeObjectURL(nextPreviewUrl)
+    }
+  }, [askThreadDraft.imageFile])
+
+  useEffect(() => {
     if (!selectedPost?.interestedResidents?.length) {
       setSelectedInterestedUserId(null)
       return
@@ -694,7 +723,7 @@ function App() {
       <main className="gate-shell">
         <section className="gate-card">
           <span className="eyebrow">加载中</span>
-          <h1>正在打开楼里换物板</h1>
+          <h1>正在打开楼里互助站</h1>
         </section>
       </main>
     )
@@ -705,9 +734,9 @@ function App() {
       <main className="gate-shell">
         <section className="gate-card">
           <span className="eyebrow">深圳住户专用</span>
-          <h1>楼里换物板</h1>
+          <h1>楼里互助站</h1>
           <p>
-            把微信群里会沉底的闲置、求物和完成记录，整理成一眼看清的楼内板子。
+            把楼内换物、求物和邻居问问整理到同一个入口，方便大家少翻群消息，更快找到人和信息。
           </p>
           <form onSubmit={handleVerifyBuildingCode} className="stack">
             <label>
@@ -715,7 +744,7 @@ function App() {
               <input
                 value={buildingCode}
                 onChange={(event) => setBuildingCode(event.target.value)}
-                placeholder="例如：SZHOME"
+                placeholder="例如：NS1C"
               />
             </label>
             {formError ? <p className="error-text">{formError}</p> : null}
@@ -733,8 +762,8 @@ function App() {
       <main className="gate-shell">
         <section className="gate-card">
           <span className="eyebrow">只需一次</span>
-          <h1>先补一个轻量身份</h1>
-          <p>我们不会做重验证，但至少需要让邻居知道怎么称呼你、怎么在微信里找到你。</p>
+          <h1>先完善你的住户信息</h1>
+          <p>只需要昵称、房号后缀和微信号，方便邻居知道怎么称呼你，也方便后续联系。</p>
           <form onSubmit={handleSaveProfile} className="stack">
             <label>
               <span>昵称</span>
@@ -749,7 +778,7 @@ function App() {
               <input
                 value={profileDraft.roomFragment}
                 onChange={(event) => setProfileDraft((current) => ({ ...current, roomFragment: event.target.value }))}
-                placeholder="例如：12A"
+                placeholder="例如：1609"
               />
             </label>
             <label>
@@ -775,11 +804,11 @@ function App() {
       <header className="topbar">
         <div className="topbar-copy">
           <span className="eyebrow">同栋楼 · 微信内 H5</span>
-          <h1>楼里换物板</h1>
+          <h1>楼里互助站</h1>
           <p className="topbar-subtitle">
             {homeLane === 'exchange'
-              ? '换物和求物继续服务楼内供需，适合快速扫完今天有什么。'
-              : '邻居问问把楼里最近的高相关问题拉出来，不用再回微信群里翻记录。'}
+              ? '换物和求物放在同一条信息线里，方便大家更快看到楼里今天有什么。'
+              : '邻居问问把楼里最近的实用讨论重新拉出来，不用再回微信群慢慢翻记录。'}
           </p>
         </div>
         <button className="ghost-button profile-chip" onClick={() => setSelectedPostId(null)}>
@@ -789,11 +818,11 @@ function App() {
 
       <section className="hero-card">
         <div>
-          <h2>{homeLane === 'exchange' ? '换物和求物，是楼里的第一条信息线。' : '邻居问问，把楼里的经验重新浮上来。'}</h2>
+          <h2>{homeLane === 'exchange' ? '换物和求物，让楼里的供需更快对上。' : '邻居问问，让楼里的经验重新被看见。'}</h2>
           <p>
             {homeLane === 'exchange'
-              ? '闲置、求物、完成记录放在同一条换物线里，适合直接判断要不要联系。'
-              : '洗衣机尺寸、搬家停车、服务推荐，都可以在这里先看到最新讨论。'}
+              ? '闲置、求物和完成记录放在一起，适合直接判断要不要联系、要不要继续跟进。'
+              : '洗衣机尺寸、搬家停车、服务推荐这些高频问题，都可以在这里先看到最新讨论。'}
           </p>
         </div>
         <div className="hero-highlights" aria-label="楼内信息提示">
@@ -883,7 +912,7 @@ function App() {
           {visiblePosts.map((post) => (
             <article
               key={post.id}
-              className={post.postType === 'wanted' ? 'post-card wanted' : 'post-card'}
+              className={`${post.postType === 'wanted' ? 'post-card wanted' : 'post-card'}${post.needsAttention ? ' highlighted' : ''}`}
               onClick={() => setSelectedPostId(post.id)}
             >
               {post.postType === 'available' ? (
@@ -931,11 +960,11 @@ function App() {
               <p>把搬家、设备、服务和住户经验放回首页，不用再靠记忆翻群消息。</p>
             </div>
             <div className="ask-home-actions">
-              <button className="primary-button" onClick={() => void openAskFeed()}>
-                {askBusy && showAskFeed ? '打开中…' : '进入问问'}
-              </button>
+              <span className="ask-home-note">
+                {askHomeThreads.length > 0 ? '直接点下面的话题卡，就能进讨论。' : '还没人开话题时，先由你抛第一条问题。'}
+              </span>
               <button
-                className="ghost-button"
+                className="primary-button"
                 onClick={() => {
                   setShowAskFeed(true)
                   setSelectedAskThread(null)
@@ -946,26 +975,37 @@ function App() {
             </div>
           </div>
           <div className="ask-home-list">
-            {(askThreads.length > 0 ? askThreads : askPreviewThreads).map((thread) => (
-              <button
-                key={thread.id}
-                type="button"
-                className="ask-feed-card ask-home-card"
-                onClick={() => void openAskFeed().then(() => openAskThread(thread.id))}
-              >
-                <div className="ask-preview-topline">
-                  <span className="category-pill ask-category-pill">{askCategoryLabel(thread.category)}</span>
-                  <span>{thread.replyCount} 条回复</span>
-                </div>
-                <strong>{thread.title}</strong>
-                {thread.body ? <p>{thread.body}</p> : null}
-                <div className="ask-preview-meta">
-                  <span>{thread.author.nickname} · {thread.author.roomFragment}</span>
-                  <span>{formatTime(thread.lastActivityAt)}</span>
-                </div>
-                <span className="ask-card-entry">查看讨论</span>
-              </button>
-            ))}
+            {askHomeThreads.length > 0 ? (
+              askHomeThreads.map((thread) => (
+                <button
+                  key={thread.id}
+                  type="button"
+                  className="ask-feed-card ask-home-card"
+                  onClick={() => void openAskThreadDirect(thread.id)}
+                >
+                  <div className="ask-preview-topline">
+                    <span className="category-pill ask-category-pill">{askCategoryLabel(thread.category)}</span>
+                    <span>{thread.replyCount} 条回复</span>
+                  </div>
+                  <strong>{thread.title}</strong>
+                  {thread.imageUrl ? <img className="ask-thread-image" src={thread.imageUrl} alt={thread.title} /> : null}
+                  {thread.body ? <p>{thread.body}</p> : null}
+                  <div className="ask-preview-meta">
+                    <span>{thread.author.nickname} · {thread.author.roomFragment}</span>
+                    <span>{formatTime(thread.lastActivityAt)}</span>
+                  </div>
+                  <span className="ask-card-entry">查看讨论</span>
+                </button>
+              ))
+            ) : (
+              <section className="empty-card ask-empty-card">
+                <h3>楼里还没人先开这个话题</h3>
+                <p>你可以先抛出第一条问题，把洗衣机尺寸、搬家停车或服务推荐这些经验重新拉回首页。</p>
+                <button className="primary-button" onClick={() => setShowAskFeed(true)}>
+                  我先来问第一条
+                </button>
+              </section>
+            )}
           </div>
         </section>
       )}
@@ -1267,8 +1307,12 @@ function App() {
                   </div>
                 ) : null}
                 <form className="stack ask-thread-form" onSubmit={submitAskThread}>
+                  <div className="form-section-head">
+                    <strong>把問題丟進樓裡</strong>
+                    <span>先用一句話講清楚，再補一點背景，鄰居更容易接得住。</span>
+                  </div>
                   <label>
-                    <span>我也想问</span>
+                    <span>你想问什么</span>
                     <input
                       value={askThreadDraft.title}
                       onChange={(event) => setAskThreadDraft((current) => ({ ...current, title: event.target.value }))}
@@ -1301,32 +1345,81 @@ function App() {
                       placeholder="例如：新搬来，怕买错尺寸，也想知道有没有人实测过。"
                     />
                   </label>
+                  <label className="upload-field">
+                    <span>补一张图片（选填）</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={(event) =>
+                        setAskThreadDraft((current) => ({
+                          ...current,
+                          imageFile: event.target.files?.[0] ?? null,
+                          imageUrl: event.target.files?.[0]?.name ?? '',
+                        }))
+                      }
+                    />
+                    <span className="field-note">例如拍一下洗衣机位、门口位置或服务名片，邻居会更快看懂你在问什么。</span>
+                    {askImagePreviewUrl ? (
+                      <div className="upload-preview-card ask-upload-preview">
+                        <img src={askImagePreviewUrl} alt="问问图片预览" className="upload-preview-image" />
+                        <div className="upload-preview-meta">
+                          <strong>{askThreadDraft.imageFile?.name}</strong>
+                          <span>
+                            {askThreadDraft.imageFile
+                              ? `${Math.max(1, Math.round(askThreadDraft.imageFile.size / 1024))} KB`
+                              : ''}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          className="ghost-button"
+                          onClick={() =>
+                            setAskThreadDraft((current) => ({
+                              ...current,
+                              imageFile: null,
+                              imageUrl: '',
+                            }))
+                          }
+                        >
+                          重新选择
+                        </button>
+                      </div>
+                    ) : null}
+                  </label>
                   <button className="primary-button" type="submit" disabled={askBusy}>
-                    {askBusy ? '发出中…' : '我也想问'}
+                    {askBusy ? '发出中…' : '发出问题'}
                   </button>
                 </form>
 
                 <div className="ask-feed-list">
-                  {askThreads.map((thread) => (
-                    <button
-                      key={thread.id}
-                      type="button"
-                      className="ask-feed-card"
-                      onClick={() => void openAskThread(thread.id)}
-                    >
-                      <div className="ask-preview-topline">
-                        <span className="category-pill ask-category-pill">{askCategoryLabel(thread.category)}</span>
-                        <span>{thread.replyCount} 条回复</span>
-                      </div>
-                      <strong>{thread.title}</strong>
-                      {thread.body ? <p>{thread.body}</p> : null}
-                      <div className="ask-preview-meta">
-                        <span>{thread.author.nickname} · {thread.author.roomFragment}</span>
-                        <span>{formatTime(thread.lastActivityAt)}</span>
-                      </div>
-                      <span className="ask-card-entry">查看讨论</span>
-                    </button>
-                  ))}
+                  {askThreads.length > 0 ? (
+                    askThreads.map((thread) => (
+                      <button
+                        key={thread.id}
+                        type="button"
+                        className="ask-feed-card"
+                        onClick={() => void openAskThread(thread.id)}
+                      >
+                        <div className="ask-preview-topline">
+                          <span className="category-pill ask-category-pill">{askCategoryLabel(thread.category)}</span>
+                          <span>{thread.replyCount} 条回复</span>
+                        </div>
+                        <strong>{thread.title}</strong>
+                        {thread.imageUrl ? <img className="ask-thread-image" src={thread.imageUrl} alt={thread.title} /> : null}
+                        {thread.body ? <p>{thread.body}</p> : null}
+                        <div className="ask-preview-meta">
+                          <span>{thread.author.nickname} · {thread.author.roomFragment}</span>
+                          <span>{formatTime(thread.lastActivityAt)}</span>
+                        </div>
+                        <span className="ask-card-entry">查看讨论</span>
+                      </button>
+                    ))
+                  ) : (
+                    <section className="empty-card ask-feed-empty-card">
+                      <h3>问问里还没有新讨论</h3>
+                      <p>不如先发第一条，把本楼最常被问的尺寸、服务或搬家问题留在这里。</p>
+                    </section>
+                  )}
                 </div>
               </>
             ) : (
@@ -1338,6 +1431,9 @@ function App() {
                     <span>{selectedAskThread.replyCount} 条回复</span>
                     <span>{formatTime(selectedAskThread.lastActivityAt)}</span>
                   </div>
+                  {selectedAskThread.imageUrl ? (
+                    <img className="ask-thread-detail-image" src={selectedAskThread.imageUrl} alt={selectedAskThread.title} />
+                  ) : null}
                   {selectedAskThread.body ? <p>{selectedAskThread.body}</p> : null}
                 </div>
 

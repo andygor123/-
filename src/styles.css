@@ -325,6 +325,13 @@ a {
   gap: 8px;
 }
 
+.ask-home-note {
+  display: block;
+  color: #61705d;
+  font-size: 0.86rem;
+  line-height: 1.5;
+}
+
 .ask-home-list {
   display: grid;
   gap: 10px;
@@ -345,6 +352,22 @@ a {
 .ask-feed-card strong,
 .ask-preview-card strong {
   margin: 0;
+}
+
+.ask-thread-image,
+.ask-thread-detail-image {
+  width: 100%;
+  object-fit: cover;
+  border-radius: 16px;
+  border: 1px solid rgba(92, 106, 84, 0.08);
+}
+
+.ask-thread-image {
+  max-height: 180px;
+}
+
+.ask-thread-detail-image {
+  max-height: 240px;
 }
 
 .ask-preview-head p,
@@ -447,6 +470,10 @@ a {
   gap: 12px;
 }
 
+.ask-upload-preview {
+  margin-top: 8px;
+}
+
 .ask-reply {
   display: grid;
   gap: 8px;
@@ -528,6 +555,15 @@ a {
   gap: 12px;
   padding: 12px;
   border: 1px solid rgba(92, 106, 84, 0.08);
+}
+
+.post-card.highlighted {
+  border-color: rgba(205, 149, 35, 0.42);
+  background:
+    linear-gradient(180deg, rgba(255, 251, 239, 0.98) 0%, rgba(255, 248, 228, 0.92) 100%);
+  box-shadow:
+    0 18px 36px rgba(98, 77, 20, 0.12),
+    inset 0 0 0 1px rgba(255, 226, 150, 0.42);
 }
 
 .post-card.wanted {
@@ -640,11 +676,13 @@ a {
   display: inline-flex;
   align-items: center;
   width: fit-content;
-  padding: 5px 10px;
+  padding: 7px 12px;
   border-radius: 999px;
-  background: rgba(255, 239, 198, 0.96);
-  color: #7b5a12;
-  font-size: 0.8rem;
+  background: linear-gradient(180deg, rgba(255, 228, 148, 0.98) 0%, rgba(255, 212, 92, 0.95) 100%);
+  color: #5f4306;
+  font-size: 0.82rem;
+  font-weight: 700;
+  box-shadow: 0 8px 18px rgba(149, 110, 18, 0.16);
 }
 
 .post-card h3,

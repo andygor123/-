@@ -68,6 +68,7 @@ export interface AskThreadSummary {
   id: string
   title: string
   body?: string
+  imageUrl?: string
   category: QuestionCategory
   author: AskAuthor
   replyCount: number
