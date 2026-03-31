@@ -447,11 +447,12 @@ function App() {
   }
 
   async function openAskFeed() {
+    setShowAskFeed(true)
+    setSelectedAskThread(null)
     setAskBusy(true)
     try {
       const result = await loadAskThreads()
       setAskThreads(result.threads)
-      setShowAskFeed(true)
       setFormError('')
     } catch (error) {
       setFormError(error instanceof Error ? error.message : '邻居问问加载失败，请稍后再试。')
@@ -872,7 +873,7 @@ function App() {
               <p>洗衣机尺寸、搬家停车、保洁推荐，这里先看最近大家在问什么。</p>
             </div>
             <button className="ghost-button" onClick={() => void openAskFeed()}>
-              去问问
+              {askBusy && showAskFeed ? '打开中…' : '去问问'}
             </button>
           </div>
           <div className="ask-preview-list">
@@ -1186,6 +1187,15 @@ function App() {
                   <strong>比 FAQ 活一点，但只聊楼里真会反复问的事情。</strong>
                   <p>这里优先看最近有更新的话题，适合快速知道现在大家在讨论什么。</p>
                 </div>
+                {askBusy ? (
+                  <div className="ask-loading-card" role="status" aria-live="polite">
+                    <span className="loading-dot" aria-hidden="true" />
+                    <div>
+                      <strong>正在打开邻居问问</strong>
+                      <p>正在把楼里最近的讨论拉出来，马上就好。</p>
+                    </div>
+                  </div>
+                ) : null}
                 <form className="stack ask-thread-form" onSubmit={submitAskThread}>
                   <label>
                     <span>我也想问</span>
