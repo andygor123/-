@@ -1,0 +1,8 @@
+node_modules/
+dist/
+test-results/
+.context/
+.gstack/
+*.tsbuildinfo
+.DS_Store
+public/uploads/
