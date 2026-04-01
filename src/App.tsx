@@ -5,6 +5,7 @@ import {
   claimPost as claimPostRequest,
   createInterest,
   createPost as createPostRequest,
+  loginWithPin,
   loadAskThread,
   loadAskThreads,
   loadPost,
@@ -12,13 +13,38 @@ import {
   loadProfile,
   removePost,
   saveProfile,
+  updatePost as updatePostRequest,
   uploadImage,
   verifyBuildingCode,
 } from './api'
-import type { AskReply, AskThreadDetail, AskThreadSummary, FitMetadata, PostItem, PostType, QuestionCategory, ResidentProfile, TabKey } from './types'
+import type {
+  AskReply,
+  AskThreadDetail,
+  AskThreadSummary,
+  AuthState,
+  FitMetadata,
+  PostItem,
+  PostType,
+  QuestionCategory,
+  ResidentIdentityHint,
+  ResidentProfile,
+  TabKey,
+} from './types'
 
 type ComposerMode = PostType | null
 type HomeLane = 'exchange' | 'ask'
+type SignupDraft = {
+  nickname: string
+  roomFragment: string
+  wechatHandle: string
+  pin: string
+  confirmPin: string
+}
+type LoginDraft = {
+  roomFragment: string
+  wechatHandle: string
+  pin: string
+}
 
 const categoryOptions = ['家具', '家电', '家居', '母婴', '数码', '其他']
 const askCategoryOptions: Array<{ value: QuestionCategory; label: string }> = [
@@ -92,8 +118,11 @@ function buildAskReplyChildren(replies: AskReply[], parentReplyId: string | null
 }
 
 function App() {
+  const [, setAuthState] = useState<AuthState>('anonymous')
   const [verified, setVerified] = useState(false)
   const [profile, setProfile] = useState<ResidentProfile | null>(null)
+  const [residentIdentityHint, setResidentIdentityHint] = useState<ResidentIdentityHint | null>(null)
+  const [showSignupFlow, setShowSignupFlow] = useState(false)
   const [posts, setPosts] = useState<PostItem[]>([])
   const [askPreviewThreads, setAskPreviewThreads] = useState<AskThreadSummary[]>([])
   const [askThreads, setAskThreads] = useState<AskThreadSummary[]>([])
@@ -103,17 +132,24 @@ function App() {
   const [replyingToReplyId, setReplyingToReplyId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [buildingCode, setBuildingCode] = useState('')
-  const [profileDraft, setProfileDraft] = useState<ResidentProfile>(() => ({
-    id: '',
+  const [profileDraft, setProfileDraft] = useState<SignupDraft>(() => ({
     nickname: '',
     roomFragment: '',
     wechatHandle: '',
+    pin: '',
+    confirmPin: '',
+  }))
+  const [loginDraft, setLoginDraft] = useState<LoginDraft>(() => ({
+    roomFragment: '',
+    wechatHandle: '',
+    pin: '',
   }))
   const [activeTab, setActiveTab] = useState<TabKey>('available')
   const [homeLane, setHomeLane] = useState<HomeLane>('exchange')
   const [selectedPostId, setSelectedPostId] = useState<string | null>(null)
   const [showComposerPicker, setShowComposerPicker] = useState(false)
   const [composerMode, setComposerMode] = useState<ComposerMode>(null)
+  const [editingPostId, setEditingPostId] = useState<string | null>(null)
   const [selectedInterestedUserId, setSelectedInterestedUserId] = useState<string | null>(null)
   const [showOptionalFields, setShowOptionalFields] = useState(false)
   const [formError, setFormError] = useState('')
@@ -157,8 +193,20 @@ function App() {
         const profileResult = await loadProfile()
         if (cancelled) return
         if (profileResult.profile) {
+          setAuthState('logged_in')
           setVerified(true)
           setProfile(profileResult.profile)
+          setShowSignupFlow(false)
+        } else {
+          setAuthState(profileResult.authState)
+          setResidentIdentityHint(profileResult.residentIdentity)
+          if (profileResult.authState === 'needs_login') {
+            setLoginDraft((current) => ({
+              ...current,
+              roomFragment: profileResult.residentIdentity?.roomFragment ?? current.roomFragment,
+              wechatHandle: profileResult.residentIdentity?.wechatHandle ?? current.wechatHandle,
+            }))
+          }
         }
       } catch {
         // ignore bootstrap failures; user can still enter building code
@@ -174,7 +222,7 @@ function App() {
   }, [])
 
   useEffect(() => {
-    if (!verified) return
+    if (!profile) return
 
     let cancelled = false
     async function fetchPosts() {
@@ -192,10 +240,10 @@ function App() {
     return () => {
       cancelled = true
     }
-  }, [activeTab, verified])
+  }, [activeTab, profile])
 
   useEffect(() => {
-    if (!verified || homeLane !== 'ask') return
+    if (!profile || homeLane !== 'ask') return
 
     let cancelled = false
     async function fetchAskThreads() {
@@ -215,7 +263,7 @@ function App() {
     return () => {
       cancelled = true
     }
-  }, [homeLane, verified])
+  }, [homeLane, profile])
 
   const currentProfile = profile
 
@@ -263,8 +311,17 @@ function App() {
     setBusy(true)
     try {
       await verifyBuildingCode(buildingCode.trim())
+      const profileResult = await loadProfile()
       setFormError('')
       setVerified(true)
+      setAuthState(profileResult.authState)
+      setResidentIdentityHint(profileResult.residentIdentity)
+      setLoginDraft((current) => ({
+        ...current,
+        roomFragment: profileResult.residentIdentity?.roomFragment ?? current.roomFragment,
+        wechatHandle: profileResult.residentIdentity?.wechatHandle ?? current.wechatHandle,
+      }))
+      setShowSignupFlow(profileResult.authState !== 'needs_login')
     } catch {
       setFormError('楼栋邀请码不正确，请向微信群里确认后再试。')
     } finally {
@@ -278,6 +335,14 @@ function App() {
       setFormError('请先填写昵称、房号后缀和微信号。')
       return
     }
+    if (!/^\d{6}$/.test(profileDraft.pin.trim())) {
+      setFormError('请设置 6 位数字 PIN。')
+      return
+    }
+    if (profileDraft.pin !== profileDraft.confirmPin) {
+      setFormError('两次输入的 PIN 不一致。')
+      return
+    }
 
     setBusy(true)
     try {
@@ -285,8 +350,10 @@ function App() {
         nickname: profileDraft.nickname.trim(),
         roomFragment: profileDraft.roomFragment.trim(),
         wechatHandle: profileDraft.wechatHandle.trim(),
+        pin: profileDraft.pin.trim(),
       })
       setProfile(result.profile)
+      setAuthState('logged_in')
       await refreshPosts(activeTab)
       setFormError('')
     } catch {
@@ -296,10 +363,38 @@ function App() {
     }
   }
 
+  async function handleLogin(event: FormEvent) {
+    event.preventDefault()
+    if (!loginDraft.roomFragment.trim() || !loginDraft.wechatHandle.trim() || !/^\d{6}$/.test(loginDraft.pin.trim())) {
+      setFormError('请输入房号后缀、微信号和 6 位 PIN。')
+      return
+    }
+
+    setBusy(true)
+    try {
+      const result = await loginWithPin({
+        roomFragment: loginDraft.roomFragment.trim(),
+        wechatHandle: loginDraft.wechatHandle.trim(),
+        pin: loginDraft.pin.trim(),
+      })
+      setProfile(result.profile)
+      setAuthState('logged_in')
+      setVerified(true)
+      setShowSignupFlow(false)
+      setFormError('')
+      await refreshPosts(activeTab)
+    } catch {
+      setFormError('登录失败，请检查房号后缀、微信号和 PIN。')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   function resetComposer() {
     if (busy) return
     setShowComposerPicker(false)
     setComposerMode(null)
+    setEditingPostId(null)
     setShowOptionalFields(false)
     setFormError('')
     setComposerNotice(null)
@@ -322,13 +417,47 @@ function App() {
   function openComposer(type: PostType) {
     setShowComposerPicker(false)
     setComposerMode(type)
+    setEditingPostId(null)
     setFormError('')
     setComposerNotice(null)
+  }
+
+  function beginEditPost(post: PostItem) {
+    setSelectedPostId(null)
+    setShowComposerPicker(false)
+    setComposerMode(post.postType)
+    setEditingPostId(post.id)
+    setShowOptionalFields(
+      Boolean(
+        post.description ||
+          post.pickupNote ||
+          post.fitMetadata?.sizeNote ||
+          post.fitMetadata?.liftFit ||
+          post.fitMetadata?.twoPersonCarry,
+      ),
+    )
+    setFormError('')
+    setComposerNotice(null)
+    setPostDraft({
+      title: post.title,
+      category: post.category,
+      priceType: post.priceType ?? 'free',
+      priceCny: post.priceCny ? String(post.priceCny) : '',
+      description: post.description ?? '',
+      pickupNote: post.pickupNote ?? '',
+      imageUrl: post.imageUrl ?? '',
+      imageFile: null,
+      sizeNote: post.fitMetadata?.sizeNote ?? '',
+      liftFit: post.fitMetadata?.liftFit ?? '',
+      twoPersonCarry: Boolean(post.fitMetadata?.twoPersonCarry),
+    })
+    setImagePreviewUrl(post.imageUrl ?? null)
   }
 
   async function createPost(event: FormEvent) {
     event.preventDefault()
     if (!currentProfile || !composerMode) return
+    const isEditing = Boolean(editingPostId)
     if (!postDraft.title.trim()) {
       setFormError('请填写标题。')
       return
@@ -355,22 +484,31 @@ function App() {
     setComposerNotice({
       tone: 'info',
       message:
-        composerMode === 'available'
-          ? '正在发布闲置，图片上传完成后会自动回到列表。'
-          : '正在发布求物，发出去后邻居马上就能看到。',
+        isEditing
+          ? composerMode === 'available'
+            ? '正在保存闲置修改…'
+            : '正在保存求物修改…'
+          : composerMode === 'available'
+            ? '正在发布闲置，图片上传完成后会自动回到列表。'
+            : '正在发布求物，发出去后邻居马上就能看到。',
     })
     setDetailNotice({
       tone: 'info',
-      message: composerMode === 'available' ? '正在发布闲置…' : '正在发布求物…',
+      message: isEditing
+        ? composerMode === 'available'
+          ? '正在保存闲置修改…'
+          : '正在保存求物修改…'
+        : composerMode === 'available'
+          ? '正在发布闲置…'
+          : '正在发布求物…',
     })
     try {
       let imageUrl = postDraft.imageUrl.trim() || undefined
-      if (composerMode === 'available' && postDraft.imageFile) {
+      if (postDraft.imageFile) {
         imageUrl = await uploadImage(postDraft.imageFile)
       }
 
-      await createPostRequest({
-        postType: composerMode,
+      const payload = {
         title: postDraft.title.trim(),
         category: postDraft.category,
         priceType: postDraft.priceType,
@@ -379,13 +517,28 @@ function App() {
         pickupNote: postDraft.pickupNote.trim() || undefined,
         imageUrl,
         fitMetadata: Object.keys(fitMetadata).length > 0 ? fitMetadata : undefined,
-      })
+      }
+
+      if (editingPostId) {
+        await updatePostRequest(editingPostId, payload)
+      } else {
+        await createPostRequest({
+          postType: composerMode,
+          ...payload,
+        })
+      }
 
       setActiveTab(composerMode)
       await refreshPosts(composerMode)
       setDetailNotice({
         tone: 'success',
-        message: composerMode === 'available' ? '闲置已发布，邻居现在能看到它了。' : '求物已发出，楼里的邻居现在能接住这个需求。',
+        message: isEditing
+          ? composerMode === 'available'
+            ? '闲置已更新，邻居现在看到的是最新信息。'
+            : '求物已更新，楼里的邻居现在看到的是最新需求。'
+          : composerMode === 'available'
+            ? '闲置已发布，邻居现在能看到它了。'
+            : '求物已发出，楼里的邻居现在能接住这个需求。',
       })
       resetComposer()
     } catch (error) {
@@ -396,7 +549,13 @@ function App() {
       })
       setDetailNotice({
         tone: 'error',
-        message: composerMode === 'available' ? '发布闲置失败，请稍后再试。' : '发布求物失败，请稍后再试。',
+        message: isEditing
+          ? composerMode === 'available'
+            ? '保存闲置修改失败，请稍后再试。'
+            : '保存求物修改失败，请稍后再试。'
+          : composerMode === 'available'
+            ? '发布闲置失败，请稍后再试。'
+            : '发布求物失败，请稍后再试。',
       })
     } finally {
       setBusy(false)
@@ -459,16 +618,28 @@ function App() {
   async function moveToHistory(postId: string) {
     if (!currentProfile) return
     setDetailAction('archive')
-    setDetailNotice({ tone: 'info', message: '正在移入完成记录…' })
+    setDetailNotice({
+      tone: 'info',
+      message: selectedPost?.status === 'available' ? '正在删除这条信息…' : '正在移入完成记录…',
+    })
     try {
       await removePost(postId)
       setActiveTab('history')
       await refreshPosts('history')
+      setDetailNotice({
+        tone: 'success',
+        message: selectedPost?.status === 'available' ? '这条信息已从当前列表移除。' : '已移入完成记录。',
+      })
       setSelectedPostId(null)
     } catch (error) {
       setDetailNotice({
         tone: 'error',
-        message: error instanceof Error ? error.message : '移入完成记录失败，请稍后再试。',
+        message:
+          error instanceof Error
+            ? error.message
+            : selectedPost?.status === 'available'
+              ? '删除失败，请稍后再试。'
+              : '移入完成记录失败，请稍后再试。',
       })
     } finally {
       setDetailAction(null)
@@ -626,7 +797,7 @@ function App() {
 
   useEffect(() => {
     if (!postDraft.imageFile) {
-      setImagePreviewUrl(null)
+      setImagePreviewUrl(postDraft.imageUrl || null)
       return
     }
 
@@ -723,7 +894,7 @@ function App() {
       <main className="gate-shell">
         <section className="gate-card">
           <span className="eyebrow">加载中</span>
-          <h1>正在打开楼里互助站</h1>
+          <h1>正在打开科技生态园1C栋</h1>
         </section>
       </main>
     )
@@ -734,10 +905,15 @@ function App() {
       <main className="gate-shell">
         <section className="gate-card">
           <span className="eyebrow">深圳住户专用</span>
-          <h1>楼里互助站</h1>
+          <h1>科技生态园1C栋</h1>
           <p>
             把楼内换物、求物和邻居问问整理到同一个入口，方便大家少翻群消息，更快找到人和信息。
           </p>
+          <div className="auth-flow-chips" aria-label="首次进入步骤">
+            <span className="auth-step-pill active">1. 输入楼栋邀请码</span>
+            <span className="auth-step-pill">2. 登录或登记</span>
+            <span className="auth-step-pill">3. 进入本楼互助站</span>
+          </div>
           <form onSubmit={handleVerifyBuildingCode} className="stack">
             <label>
               <span>请输入楼栋邀请码</span>
@@ -758,12 +934,84 @@ function App() {
   }
 
   if (!currentProfile) {
+    if (!showSignupFlow) {
+      return (
+        <main className="gate-shell">
+          <section className="gate-card">
+            <span className="eyebrow">住户登录</span>
+            <h1>进入科技生态园1C栋</h1>
+            <p>先通过楼栋码，再输入房号后缀、微信号和 6 位 PIN，就能回到这栋楼里的内容。</p>
+            {residentIdentityHint ? (
+              <div className="auth-hint-card">
+                <strong>这台手机之前用过这个身份</strong>
+                <span>
+                  {residentIdentityHint.nickname} · {residentIdentityHint.roomFragment} · {residentIdentityHint.wechatHandle}
+                </span>
+              </div>
+            ) : null}
+            <form onSubmit={handleLogin} className="stack">
+              <label>
+                <span>房号后缀</span>
+                <input
+                  value={loginDraft.roomFragment}
+                  onChange={(event) => setLoginDraft((current) => ({ ...current, roomFragment: event.target.value }))}
+                  placeholder="例如：1609"
+                />
+              </label>
+              <label>
+                <span>微信号</span>
+                <input
+                  value={loginDraft.wechatHandle}
+                  onChange={(event) => setLoginDraft((current) => ({ ...current, wechatHandle: event.target.value }))}
+                  placeholder="例如：may12a"
+                />
+              </label>
+              <label>
+                <span>6 位 PIN</span>
+                <input
+                  value={loginDraft.pin}
+                  onChange={(event) => setLoginDraft((current) => ({ ...current, pin: event.target.value }))}
+                  type="password"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  maxLength={6}
+                  autoComplete="current-password"
+                  placeholder="例如：160912"
+                />
+              </label>
+              <p className="helper-text">PIN 只需要 6 位数字。忘记了的话，暂时需要找你来人工处理。</p>
+              {formError ? <p className="error-text">{formError}</p> : null}
+              <button className="primary-button" type="submit" disabled={busy}>
+                {busy ? '登录中…' : '登录'}
+              </button>
+            </form>
+            {!residentIdentityHint ? (
+              <button
+                className="ghost-button secondary-action"
+                type="button"
+                onClick={() => {
+                  setFormError('')
+                  setShowSignupFlow(true)
+                }}
+              >
+                第一次使用？去登记身份
+              </button>
+            ) : null}
+          </section>
+        </main>
+      )
+    }
+
     return (
       <main className="gate-shell">
         <section className="gate-card">
           <span className="eyebrow">只需一次</span>
-          <h1>先完善你的住户信息</h1>
-          <p>只需要昵称、房号后缀和微信号，方便邻居知道怎么称呼你，也方便后续联系。</p>
+          <h1>先完善你的住户信息并设置 PIN</h1>
+          <p>只需要昵称、房号后缀、微信号和 6 位 PIN。以后换手机回来，用房号后缀 + 微信号 + PIN 就能登录。</p>
+          <div className="auth-hint-card auth-hint-soft">
+            <strong>以后怎么回来？</strong>
+            <span>下次只要记得房号后缀、微信号和这 6 位 PIN，就不用再输楼栋邀请码。</span>
+          </div>
           <form onSubmit={handleSaveProfile} className="stack">
             <label>
               <span>昵称</span>
@@ -789,11 +1037,48 @@ function App() {
                 placeholder="例如：may12a"
               />
             </label>
+            <label>
+              <span>设置 6 位 PIN</span>
+              <input
+                value={profileDraft.pin}
+                onChange={(event) => setProfileDraft((current) => ({ ...current, pin: event.target.value }))}
+                type="password"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                maxLength={6}
+                autoComplete="new-password"
+                placeholder="例如：160912"
+              />
+            </label>
+            <label>
+              <span>确认 PIN</span>
+              <input
+                value={profileDraft.confirmPin}
+                onChange={(event) => setProfileDraft((current) => ({ ...current, confirmPin: event.target.value }))}
+                type="password"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                maxLength={6}
+                autoComplete="new-password"
+                placeholder="再次输入 6 位 PIN"
+              />
+            </label>
+            <p className="helper-text">建议用你记得住、但别人不容易猜到的 6 位数字。暂时不支持自助找回。</p>
             {formError ? <p className="error-text">{formError}</p> : null}
             <button className="primary-button" type="submit" disabled={busy}>
-              {busy ? '保存中…' : '保存并继续'}
+              {busy ? '创建中…' : '创建身份并进入'}
             </button>
           </form>
+          <button
+            className="ghost-button secondary-action"
+            type="button"
+            onClick={() => {
+              setFormError('')
+              setShowSignupFlow(false)
+            }}
+          >
+            已经登记过？去登录
+          </button>
         </section>
       </main>
     )
@@ -804,7 +1089,7 @@ function App() {
       <header className="topbar">
         <div className="topbar-copy">
           <span className="eyebrow">同栋楼 · 微信内 H5</span>
-          <h1>楼里互助站</h1>
+          <h1>科技生态园1C栋</h1>
           <p className="topbar-subtitle">
             {homeLane === 'exchange'
               ? '换物和求物放在同一条信息线里，方便大家更快看到楼里今天有什么。'
@@ -953,27 +1238,6 @@ function App() {
         </>
       ) : (
         <section className="ask-home-section">
-          <div className="ask-preview-head ask-home-head">
-            <div>
-              <span className="eyebrow">邻居问问</span>
-              <h3>楼里最近有人在问什么？</h3>
-              <p>把搬家、设备、服务和住户经验放回首页，不用再靠记忆翻群消息。</p>
-            </div>
-            <div className="ask-home-actions">
-              <span className="ask-home-note">
-                {askHomeThreads.length > 0 ? '直接点下面的话题卡，就能进讨论。' : '还没人开话题时，先由你抛第一条问题。'}
-              </span>
-              <button
-                className="primary-button"
-                onClick={() => {
-                  setShowAskFeed(true)
-                  setSelectedAskThread(null)
-                }}
-              >
-                我也想问
-              </button>
-            </div>
-          </div>
           <div className="ask-home-list">
             {askHomeThreads.length > 0 ? (
               askHomeThreads.map((thread) => (
@@ -1010,8 +1274,18 @@ function App() {
         </section>
       )}
 
-      <button className="fab" onClick={() => setShowComposerPicker(true)}>
-        发布
+      <button
+        className="fab"
+        onClick={() => {
+          if (homeLane === 'ask') {
+            setSelectedAskThread(null)
+            setShowAskFeed(true)
+            return
+          }
+          setShowComposerPicker(true)
+        }}
+      >
+        {homeLane === 'ask' ? '我也想问' : '发布'}
       </button>
 
       {showComposerPicker && !composerMode ? (
@@ -1047,14 +1321,22 @@ function App() {
           <section className="composer-sheet" onClick={(event) => event.stopPropagation()}>
             <div className="sheet-handle" aria-hidden="true" />
             <div className="composer-header">
-              <h3>{composerMode === 'available' ? '发布闲置' : '发布求物'}</h3>
+              <h3>
+                {editingPostId
+                  ? composerMode === 'available'
+                    ? '编辑闲置'
+                    : '编辑求物'
+                  : composerMode === 'available'
+                    ? '发布闲置'
+                    : '发布求物'}
+              </h3>
               <button className="ghost-button" onClick={resetComposer} disabled={busy}>关闭</button>
             </div>
             <div className="composer-switch">
-              <button className={composerMode === 'available' ? 'switch active' : 'switch'} onClick={() => setComposerMode('available')} disabled={busy}>
+              <button className={composerMode === 'available' ? 'switch active' : 'switch'} onClick={() => setComposerMode('available')} disabled={busy || Boolean(editingPostId)}>
                 发布闲置
               </button>
-              <button className={composerMode === 'wanted' ? 'switch active' : 'switch'} onClick={() => setComposerMode('wanted')} disabled={busy}>
+              <button className={composerMode === 'wanted' ? 'switch active' : 'switch'} onClick={() => setComposerMode('wanted')} disabled={busy || Boolean(editingPostId)}>
                 发布求物
               </button>
             </div>
@@ -1066,6 +1348,12 @@ function App() {
                     <strong>{composerNotice.tone === 'info' ? '正在处理中' : '发布遇到一点问题'}</strong>
                     <span>{composerNotice.message}</span>
                   </div>
+                </div>
+              ) : null}
+              {editingPostId ? (
+                <div className="composer-intro">
+                  <strong>{composerMode === 'available' ? '把这条闲置改到最新。' : '把这条求物改到最新。'}</strong>
+                  <p>{composerMode === 'available' ? '价格、图片和取货信息改完后，邻居看到的就是新版本。' : '预算、条件和描述改完后，邻居看到的就是新版本。'}</p>
                 </div>
               ) : null}
               {composerMode === 'wanted' ? (
@@ -1251,9 +1539,23 @@ function App() {
                 {busy ? (
                   <span className="button-busy-copy">
                     <span className="loading-dot" aria-hidden="true" />
-                    <span>{composerMode === 'available' ? '正在发布闲置…' : '正在发布求物…'}</span>
+                    <span>
+                      {editingPostId
+                        ? composerMode === 'available'
+                          ? '正在保存闲置…'
+                          : '正在保存求物…'
+                        : composerMode === 'available'
+                          ? '正在发布闲置…'
+                          : '正在发布求物…'}
+                    </span>
                   </span>
-                ) : composerMode === 'available' ? '发布闲置' : '发布求物'}
+                ) : editingPostId ? (
+                  composerMode === 'available' ? '保存闲置修改' : '保存求物修改'
+                ) : composerMode === 'available' ? (
+                  '发布闲置'
+                ) : (
+                  '发布求物'
+                )}
               </button>
             </form>
           </section>
@@ -1556,6 +1858,21 @@ function App() {
                   : '表达兴趣后，再去微信联系，更像楼里自己的交换秩序。'}
               </p>
               <div className="button-row detail-action-row">
+                {selectedPost.status === 'available' && selectedPost.ownerId === currentProfile.id ? (
+                  <button type="button" className="ghost-button" onClick={() => beginEditPost(selectedPost)}>
+                    编辑这条
+                  </button>
+                ) : null}
+                {selectedPost.status === 'available' && selectedPost.ownerId === currentProfile.id ? (
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => moveToHistory(selectedPost.id)}
+                    disabled={busy || detailAction === 'archive'}
+                  >
+                    {detailAction === 'archive' ? '删除中…' : '删除这条'}
+                  </button>
+                ) : null}
                 {selectedPost.status === 'available' && selectedPost.ownerId !== currentProfile.id ? (
                   <button
                     className="primary-button"

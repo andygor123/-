@@ -5,18 +5,51 @@ test.beforeEach(async ({ request }) => {
   expect(response.ok()).toBeTruthy()
 })
 
+async function loginSeedResident(
+  page: import('@playwright/test').Page,
+  roomFragment: string,
+  wechatHandle: string,
+  pin: string,
+  deviceIdentityKey: string,
+) {
+  await page.addInitScript((key) => {
+    window.localStorage.setItem('building-board-device-key', key)
+  }, deviceIdentityKey)
+  await page.goto('/')
+  await page.getByPlaceholder('例如：NS1C').fill('SZHOME')
+  await page.getByRole('button', { name: '进入本楼' }).click()
+  await page.getByLabel('房号后缀').fill(roomFragment)
+  await page.getByLabel('微信号').fill(wechatHandle)
+  await page.getByLabel('6 位 PIN').fill(pin)
+  await page.getByRole('button', { name: '登录' }).click()
+  await expect(page.locator('.lane-switcher')).toBeVisible()
+}
+
+async function openExchangeLane(page: import('@playwright/test').Page) {
+  await page.locator('.lane-switcher').getByRole('button', { name: '换物' }).click()
+  await expect(page.locator('.tabbar')).toBeVisible()
+  await page.locator('.tabbar').getByRole('button', { name: '闲置' }).click()
+}
+
+async function openAskLane(page: import('@playwright/test').Page) {
+  await page.locator('.lane-switcher').getByRole('button', { name: '问问' }).click()
+  await expect(page.locator('.ask-home-list, .ask-empty-state')).toBeVisible()
+}
+
 test('mobile resident can enter, create available post, then see it in list', async ({ page }) => {
   await page.goto('/')
 
-  await page.getByPlaceholder('例如：SZHOME').fill('SZHOME')
+  await page.getByPlaceholder('例如：NS1C').fill('SZHOME')
   await page.getByRole('button', { name: '进入本楼' }).click()
 
-  await page.getByPlaceholder('例如：阿May').fill('阿May')
-  await page.getByPlaceholder('例如：1609').fill('1609')
-  await page.getByPlaceholder('例如：may12a').fill('may12a')
-  await page.getByRole('button', { name: '保存并继续' }).click()
+  await page.getByLabel('昵称').fill('阿May')
+  await page.getByLabel('房号后缀').fill('1609')
+  await page.getByLabel('微信号').fill('may12a')
+  await page.getByLabel('设置 6 位 PIN').fill('160912')
+  await page.getByLabel('确认 PIN').fill('160912')
+  await page.getByRole('button', { name: '创建身份并进入' }).click()
 
-  await expect(page.getByText('楼里换物板')).toBeVisible()
+  await expect(page.getByText('科技生态园1C栋')).toBeVisible()
   await page.getByRole('button', { name: '发布' }).click()
   await page.locator('.composer-picker-grid').getByRole('button', { name: /发布闲置/ }).click()
 
@@ -36,11 +69,9 @@ test('mobile resident can enter, create available post, then see it in list', as
 })
 
 test('owner can claim one interested resident and move item to history', async ({ page }) => {
-  await page.addInitScript(() => {
-    window.localStorage.setItem('building-board-device-key', 'seed-lin')
-  })
-  await page.goto('/')
-  await expect(page.getByText('楼里换物板')).toBeVisible()
+  await loginSeedResident(page, '12A', 'linayi12a', '111111', 'seed-lin')
+  await expect(page.getByText('科技生态园1C栋')).toBeVisible()
+  await openExchangeLane(page)
 
   await page.getByText('九成新书架').click()
   const detailSheet = page.locator('.detail-sheet')
@@ -54,17 +85,11 @@ test('owner can claim one interested resident and move item to history', async (
 })
 
 test('resident can browse 邻居问问, open a thread, reply, and expand nested replies', async ({ page }) => {
-  await page.addInitScript(() => {
-    window.localStorage.setItem('building-board-device-key', 'seed-lin')
-  })
-  await page.goto('/')
+  await loginSeedResident(page, '12A', 'linayi12a', '111111', 'seed-lin')
 
-  await expect(page.getByText('楼里的问题，也别再沉到底下。')).toBeVisible()
-  await page.getByRole('button', { name: '去问问' }).click()
-
+  await openAskLane(page)
   const askSheet = page.locator('.ask-sheet')
-  await expect(askSheet.getByText('楼里最近在问什么')).toBeVisible()
-  await askSheet.getByRole('button', { name: /阳台位能放多深的洗衣机/ }).click()
+  await page.getByRole('button', { name: /阳台位能放多深的洗衣机/ }).click()
 
   await expect(askSheet.getByText('新搬来，怕买错尺寸，想问下有没有邻居实测过。')).toBeVisible()
   await expect(askSheet.getByText('展开 1 条回复')).toBeVisible()

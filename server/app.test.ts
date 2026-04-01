@@ -1,15 +1,81 @@
+import fs from 'node:fs'
+import path from 'node:path'
 import request from 'supertest'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { createApp } from './app.ts'
-import { seedState, writeStore } from './store.ts'
-import fs from 'node:fs'
-import path from 'node:path'
+import { seedState, testSeedState, writeStore } from './store.ts'
 
 const DATA_FILE = path.resolve(process.cwd(), '.context', 'data', 'app-state.json')
 
+async function loginSeed(app: ReturnType<typeof createApp>, options: { roomFragment: string; wechatHandle: string; pin: string; deviceIdentityKey: string }) {
+  await request(app)
+    .post('/api/entry/verify')
+    .send({
+      buildingCode: 'SZHOME',
+      deviceIdentityKey: options.deviceIdentityKey,
+    })
+
+  return request(app)
+    .post('/api/auth/login')
+    .set('x-device-identity', options.deviceIdentityKey)
+    .send({
+      roomFragment: options.roomFragment,
+      wechatHandle: options.wechatHandle,
+      pin: options.pin,
+    })
+}
+
+async function loginSeedAgent(agent: ReturnType<typeof request.agent>, options: { roomFragment: string; wechatHandle: string; pin: string; deviceIdentityKey: string }) {
+  await agent
+    .post('/api/entry/verify')
+    .send({
+      buildingCode: 'SZHOME',
+      deviceIdentityKey: options.deviceIdentityKey,
+    })
+
+  return agent
+    .post('/api/auth/login')
+    .set('x-device-identity', options.deviceIdentityKey)
+    .send({
+      roomFragment: options.roomFragment,
+      wechatHandle: options.wechatHandle,
+      pin: options.pin,
+    })
+}
+
+async function signupResident(app: ReturnType<typeof createApp>, options: {
+  buildingCode?: string
+  deviceIdentityKey?: string
+  nickname?: string
+  roomFragment?: string
+  wechatHandle?: string
+  pin?: string
+}) {
+  const verify = await request(app)
+    .post('/api/entry/verify')
+    .send({
+      buildingCode: options.buildingCode ?? 'SZHOME',
+      deviceIdentityKey: options.deviceIdentityKey,
+    })
+
+  const deviceIdentityKey = verify.body.deviceIdentityKey as string
+
+  const profile = await request(app)
+    .put('/api/profile')
+    .set('x-device-identity', deviceIdentityKey)
+    .send({
+      nickname: options.nickname ?? '阿May',
+      roomFragment: options.roomFragment ?? '1609',
+      wechatHandle: options.wechatHandle ?? 'may1609',
+      pin: options.pin ?? '160912',
+    })
+
+  return { verify, profile, deviceIdentityKey }
+}
+
 describe('server app', () => {
   beforeEach(() => {
-    writeStore(JSON.parse(JSON.stringify(seedState)))
+    writeStore(JSON.parse(JSON.stringify(testSeedState)))
   })
 
   it('rejects invalid building code', async () => {
@@ -30,28 +96,57 @@ describe('server app', () => {
     expect(response.body.ok).toBe(true)
   })
 
-  it('creates a lightweight profile after verify', async () => {
+  it('creates a resident profile with pin after verify and starts a session', async () => {
     const app = createApp()
-    const verify = await request(app)
-      .post('/api/entry/verify')
-      .send({ buildingCode: 'SZHOME' })
+    const { verify, profile } = await signupResident(app, {})
 
     expect(verify.status).toBe(200)
-
-    const deviceIdentityKey = verify.body.deviceIdentityKey as string
-
-    const profile = await request(app)
-      .put('/api/profile')
-      .set('x-device-identity', deviceIdentityKey)
-      .send({
-        nickname: '阿May',
-        roomFragment: '12A',
-        wechatHandle: 'may12a',
-      })
-
     expect(profile.status).toBe(200)
     expect(profile.body.profile.nickname).toBe('阿May')
-    expect(profile.body.profile.wechatHandle).toBe('may12a')
+    expect(profile.body.profile.wechatHandle).toBe('may1609')
+    expect(profile.headers['set-cookie']).toBeTruthy()
+  })
+
+  it('auto restores a session for a known device without asking to log in again', async () => {
+    const app = createApp()
+    const response = await request(app)
+      .get('/api/profile')
+      .set('x-device-identity', 'seed-lin')
+
+    expect(response.status).toBe(200)
+    expect(response.body.profile.nickname).toBe('林阿姨')
+    expect(response.body.authState).toBe('logged_in')
+    expect(response.body.residentIdentity.roomFragment).toBe('12A')
+    expect(response.headers['set-cookie']).toBeTruthy()
+  })
+
+  it('logs in with room fragment + wechat handle + pin and creates a session', async () => {
+    const app = createApp()
+    const response = await loginSeed(app, {
+      roomFragment: '12A',
+      wechatHandle: 'linayi12a',
+      pin: '111111',
+      deviceIdentityKey: 'device-login-lin',
+    })
+
+    expect(response.status).toBe(200)
+    expect(response.body.profile.nickname).toBe('林阿姨')
+    expect(response.headers['set-cookie']).toBeTruthy()
+  })
+
+  it('rejects login without verified building access', async () => {
+    const app = createApp()
+    const response = await request(app)
+      .post('/api/auth/login')
+      .set('x-device-identity', 'device-login-lin')
+      .send({
+        roomFragment: '12A',
+        wechatHandle: 'linayi12a',
+        pin: '111111',
+      })
+
+    expect(response.status).toBe(401)
+    expect(response.body.error).toBe('building_access_required')
   })
 
   it('rejects profile creation without verified building access', async () => {
@@ -62,31 +157,62 @@ describe('server app', () => {
       .set('x-device-identity', 'device-unverified')
       .send({
         nickname: '阿May',
-        roomFragment: '12A',
-        wechatHandle: 'may12a',
+        roomFragment: '1609',
+        wechatHandle: 'may1609',
+        pin: '160912',
       })
 
     expect(profile.status).toBe(401)
     expect(profile.body.error).toBe('building_access_required')
   })
 
-  it('rejects post list access without building verification', async () => {
+  it('does not let an unauthed known device overwrite the existing resident profile', async () => {
     const app = createApp()
 
-    const response = await request(app)
-      .get('/api/posts?type=available')
-      .set('x-device-identity', 'device-unverified')
+    const verify = await request(app)
+      .post('/api/entry/verify')
+      .send({
+        buildingCode: 'SZHOME',
+        deviceIdentityKey: 'seed-lin',
+      })
+
+    expect(verify.status).toBe(200)
+
+    const profile = await request(app)
+      .put('/api/profile')
+      .set('x-device-identity', 'seed-lin')
+      .send({
+        nickname: '假林阿姨',
+        roomFragment: '9999',
+        wechatHandle: 'fake-lin',
+        pin: '999999',
+      })
+
+    expect(profile.status).toBe(401)
+    expect(profile.body.error).toBe('login_required')
+  })
+
+  it('rejects post list access without an authenticated session', async () => {
+    const app = createApp()
+    const response = await request(app).get('/api/posts?type=available')
 
     expect(response.status).toBe(401)
-    expect(response.body.error).toBe('building_access_required')
+    expect(response.body.error).toBe('auth_required')
   })
 
   it('rejects claim when selected resident never expressed interest', async () => {
     const app = createApp()
+    const agent = request.agent(app)
 
-    const response = await request(app)
+    await loginSeedAgent(agent, {
+      roomFragment: '12A',
+      wechatHandle: 'linayi12a',
+      pin: '111111',
+      deviceIdentityKey: 'seed-lin',
+    })
+
+    const response = await agent
       .post('/api/posts/post-1/claim')
-      .set('x-device-identity', 'seed-lin')
       .send({
         claimedByUserId: 'resident-ma',
       })
@@ -95,12 +221,73 @@ describe('server app', () => {
     expect(response.body.error).toBe('claimer_not_interested')
   })
 
+  it('lets the post owner edit their available post', async () => {
+    const app = createApp()
+    const agent = request.agent(app)
+
+    await loginSeedAgent(agent, {
+      roomFragment: '12A',
+      wechatHandle: 'linayi12a',
+      pin: '111111',
+      deviceIdentityKey: 'seed-lin',
+    })
+
+    const response = await agent
+      .patch('/api/posts/post-1')
+      .send({
+        title: '九成新书架，可小刀',
+        category: '家具',
+        priceType: 'paid',
+        priceCny: 66,
+        description: '重新整理过，今晚可看。',
+        pickupNote: '今晚 8 点后',
+        imageUrl: '/sample-bookshelf.svg',
+        fitMetadata: {
+          sizeNote: '约 120cm x 80cm',
+          liftFit: '可进电梯',
+        },
+      })
+
+    expect(response.status).toBe(200)
+    expect(response.body.post.title).toBe('九成新书架，可小刀')
+    expect(response.body.post.priceCny).toBe(66)
+  })
+
+  it('rejects post edits from non-owners', async () => {
+    const app = createApp()
+    const agent = request.agent(app)
+
+    await loginSeedAgent(agent, {
+      roomFragment: '05C',
+      wechatHandle: 'zhouzhou05',
+      pin: '222222',
+      deviceIdentityKey: 'seed-zhou',
+    })
+
+    const response = await agent
+      .patch('/api/posts/post-1')
+      .send({
+        title: '乱改标题',
+        category: '家具',
+        imageUrl: '/sample-bookshelf.svg',
+      })
+
+    expect(response.status).toBe(403)
+    expect(response.body.error).toBe('not_post_owner')
+  })
+
   it('does not expose owner wechat handle before the viewer interacts', async () => {
     const app = createApp()
+    const agent = request.agent(app)
 
-    const response = await request(app)
-      .get('/api/posts/post-1')
-      .set('x-device-identity', 'seed-ma')
+    await loginSeedAgent(agent, {
+      roomFragment: '16D',
+      wechatHandle: 'may16d',
+      pin: '444444',
+      deviceIdentityKey: 'seed-ma',
+    })
+
+    const response = await agent.get('/api/posts/post-1')
 
     expect(response.status).toBe(200)
     expect(response.body.post.ownerWechatHandle).toBeNull()
@@ -108,10 +295,16 @@ describe('server app', () => {
 
   it('exposes owner wechat handle after the viewer expresses interest', async () => {
     const app = createApp()
+    const agent = request.agent(app)
 
-    const response = await request(app)
-      .get('/api/posts/post-1')
-      .set('x-device-identity', 'seed-zhou')
+    await loginSeedAgent(agent, {
+      roomFragment: '05C',
+      wechatHandle: 'zhouzhou05',
+      pin: '222222',
+      deviceIdentityKey: 'seed-zhou',
+    })
+
+    const response = await agent.get('/api/posts/post-1')
 
     expect(response.status).toBe(200)
     expect(response.body.post.ownerWechatHandle).toBe('linayi12a')
@@ -119,9 +312,9 @@ describe('server app', () => {
 
   it('auto archives claimed posts after 24 hours when loading posts', async () => {
     writeStore({
-      ...JSON.parse(JSON.stringify(seedState)),
+      ...JSON.parse(JSON.stringify(testSeedState)),
       posts: [
-        ...JSON.parse(JSON.stringify(seedState)).posts,
+        ...JSON.parse(JSON.stringify(testSeedState)).posts,
         {
           id: 'post-old-claimed',
           userId: 'resident-lin',
@@ -138,10 +331,21 @@ describe('server app', () => {
       ],
     })
     const app = createApp()
+    const agent = request.agent(app)
 
-    const response = await request(app)
-      .get('/api/posts?type=history')
-      .set('x-device-identity', 'seed-lin')
+    const signup = await signupResident(app, {
+      deviceIdentityKey: 'device-history-viewer',
+      nickname: '历史查看',
+      roomFragment: '2001',
+      wechatHandle: 'history2001',
+      pin: '200120',
+    })
+    const cookie = signup.profile.headers['set-cookie']
+    if (cookie) {
+      agent.jar.setCookie(cookie[0])
+    }
+
+    const response = await agent.get('/api/posts?type=history')
 
     expect(response.status).toBe(200)
     expect(response.body.posts.some((post: { id: string }) => post.id === 'post-old-claimed')).toBe(true)
@@ -149,9 +353,17 @@ describe('server app', () => {
 
   it('rejects upload when token was never issued for this resident', async () => {
     const app = createApp()
+    const agent = request.agent(app)
     const beforeFiles = new Set(fs.readdirSync(path.resolve(process.cwd(), '.context', 'data', 'tmp-uploads')))
 
-    const response = await request(app)
+    await loginSeedAgent(agent, {
+      roomFragment: '12A',
+      wechatHandle: 'linayi12a',
+      pin: '111111',
+      deviceIdentityKey: 'seed-lin',
+    })
+
+    const response = await agent
       .put('/api/uploads/local/not-real')
       .set('x-device-identity', 'seed-lin')
       .attach('file', Buffer.from('fake-image'), 'chair.jpg')
@@ -164,14 +376,19 @@ describe('server app', () => {
 
   it('accepts upload only after a signed token is issued', async () => {
     const app = createApp()
+    const agent = request.agent(app)
 
-    const sign = await request(app)
-      .post('/api/uploads/sign')
-      .set('x-device-identity', 'seed-lin')
+    await loginSeedAgent(agent, {
+      roomFragment: '12A',
+      wechatHandle: 'linayi12a',
+      pin: '111111',
+      deviceIdentityKey: 'seed-lin',
+    })
 
+    const sign = await agent.post('/api/uploads/sign')
     expect(sign.status).toBe(200)
 
-    const response = await request(app)
+    const response = await agent
       .put(sign.body.uploadUrl)
       .set('x-device-identity', 'seed-lin')
       .attach('file', Buffer.from('fake-image'), 'chair.jpg')
@@ -182,10 +399,16 @@ describe('server app', () => {
 
   it('returns ask thread summaries ordered by latest activity', async () => {
     const app = createApp()
+    const agent = request.agent(app)
 
-    const response = await request(app)
-      .get('/api/ask/threads?limit=2')
-      .set('x-device-identity', 'seed-lin')
+    await loginSeedAgent(agent, {
+      roomFragment: '12A',
+      wechatHandle: 'linayi12a',
+      pin: '111111',
+      deviceIdentityKey: 'seed-lin',
+    })
+
+    const response = await agent.get('/api/ask/threads?limit=2')
 
     expect(response.status).toBe(200)
     expect(response.body.threads).toHaveLength(2)
@@ -195,10 +418,17 @@ describe('server app', () => {
 
   it('creates ask thread with optional image url', async () => {
     const app = createApp()
+    const agent = request.agent(app)
 
-    const response = await request(app)
+    await loginSeedAgent(agent, {
+      roomFragment: '12A',
+      wechatHandle: 'linayi12a',
+      pin: '111111',
+      deviceIdentityKey: 'seed-lin',
+    })
+
+    const response = await agent
       .post('/api/ask/threads')
-      .set('x-device-identity', 'seed-lin')
       .send({
         title: '求问这个角落能放什么架子？',
         body: '想找邻居实测一下。',
@@ -210,18 +440,25 @@ describe('server app', () => {
     expect(response.body.thread.imageUrl).toBe('/uploads/test-corner.jpg')
   })
 
-  it('backfills older persisted stores that do not have ask arrays', async () => {
+  it('backfills older persisted stores that do not have ask arrays or sessions', async () => {
     const legacyState = {
-      users: seedState.users,
-      posts: seedState.posts,
-      postInterests: seedState.postInterests,
+      users: testSeedState.users,
+      posts: testSeedState.posts,
+      postInterests: testSeedState.postInterests,
     }
     fs.writeFileSync(DATA_FILE, JSON.stringify(legacyState, null, 2))
 
     const app = createApp()
-    const response = await request(app)
-      .get('/api/ask/threads?limit=3')
-      .set('x-device-identity', 'seed-lin')
+    const agent = request.agent(app)
+
+    await loginSeedAgent(agent, {
+      roomFragment: '12A',
+      wechatHandle: 'linayi12a',
+      pin: '111111',
+      deviceIdentityKey: 'seed-lin',
+    })
+
+    const response = await agent.get('/api/ask/threads?limit=3')
 
     expect(response.status).toBe(200)
     expect(response.body.threads).toEqual([])
@@ -229,35 +466,36 @@ describe('server app', () => {
     const normalized = JSON.parse(fs.readFileSync(DATA_FILE, 'utf-8')) as Record<string, unknown>
     expect(normalized.questionThreads).toEqual([])
     expect(normalized.questionReplies).toEqual([])
+    expect(normalized.sessions).toEqual(expect.any(Array))
   })
 
   it('creates nested ask replies up to depth 3 and rejects depth 4', async () => {
     const app = createApp()
+    const agentA = request.agent(app)
+    const agentB = request.agent(app)
+    const agentC = request.agent(app)
+    const agentD = request.agent(app)
 
-    const level1 = await request(app)
-      .post('/api/ask/threads/thread-3/replies')
-      .set('x-device-identity', 'seed-zhou')
-      .send({ body: '我上次也是停在西侧。' })
+    await loginSeedAgent(agentA, { roomFragment: '05C', wechatHandle: 'zhouzhou05', pin: '222222', deviceIdentityKey: 'seed-zhou' })
+    await loginSeedAgent(agentB, { roomFragment: '07B', wechatHandle: 'he07b', pin: '333333', deviceIdentityKey: 'seed-he' })
+    await loginSeedAgent(agentC, { roomFragment: '12A', wechatHandle: 'linayi12a', pin: '111111', deviceIdentityKey: 'seed-lin' })
+    await loginSeedAgent(agentD, { roomFragment: '08F', wechatHandle: 'chen08f', pin: '555555', deviceIdentityKey: 'seed-chen' })
 
+    const level1 = await agentA.post('/api/ask/threads/thread-3/replies').send({ body: '我上次也是停在西侧。' })
     expect(level1.status).toBe(201)
 
-    const level2 = await request(app)
+    const level2 = await agentB
       .post('/api/ask/threads/thread-3/replies')
-      .set('x-device-identity', 'seed-he')
       .send({ body: '那边拐弯空间会不会太小？', parentReplyId: level1.body.reply.id })
-
     expect(level2.status).toBe(201)
 
-    const level3 = await request(app)
+    const level3 = await agentC
       .post('/api/ask/threads/thread-3/replies')
-      .set('x-device-identity', 'seed-lin')
       .send({ body: '早一点搬会更顺。', parentReplyId: level2.body.reply.id })
-
     expect(level3.status).toBe(201)
 
-    const level4 = await request(app)
+    const level4 = await agentD
       .post('/api/ask/threads/thread-3/replies')
-      .set('x-device-identity', 'seed-chen')
       .send({ body: '那我再问物业。', parentReplyId: level3.body.reply.id })
 
     expect(level4.status).toBe(400)
@@ -266,10 +504,17 @@ describe('server app', () => {
 
   it('rejects paid post creation without a valid price', async () => {
     const app = createApp()
+    const agent = request.agent(app)
 
-    const response = await request(app)
+    await loginSeedAgent(agent, {
+      roomFragment: '12A',
+      wechatHandle: 'linayi12a',
+      pin: '111111',
+      deviceIdentityKey: 'seed-lin',
+    })
+
+    const response = await agent
       .post('/api/posts')
-      .set('x-device-identity', 'seed-lin')
       .send({
         postType: 'available',
         title: '办公椅',

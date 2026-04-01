@@ -13,6 +13,14 @@ export interface ResidentProfile {
   wechatHandle: string
 }
 
+export type AuthState = 'anonymous' | 'needs_signup' | 'needs_login' | 'logged_in'
+
+export interface ResidentIdentityHint {
+  nickname: string
+  roomFragment: string
+  wechatHandle: string
+}
+
 export interface FitMetadata {
   sizeNote?: string
   liftFit?: string

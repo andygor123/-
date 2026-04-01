@@ -1,3 +1,4 @@
+import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 
@@ -11,6 +12,7 @@ export interface ResidentProfile {
   roomFragment: string
   wechatHandle: string
   deviceIdentityKey: string
+  pinHash?: string
 }
 
 export interface PostItem {
@@ -70,12 +72,25 @@ export interface QuestionReply {
   removedAt?: string
 }
 
+export interface SessionRecord {
+  id: string
+  userId: string
+  deviceIdentityKey: string
+  expiresAt: string
+  createdAt: string
+}
+
 export interface StoreShape {
   users: ResidentProfile[]
   posts: PostItem[]
   postInterests: PostInterest[]
   questionThreads: QuestionThread[]
   questionReplies: QuestionReply[]
+  sessions: SessionRecord[]
+}
+
+function seedPinHash(pin: string, salt: string) {
+  return `scrypt:${salt}:${crypto.scryptSync(pin, salt, 64).toString('hex')}`
 }
 
 const DATA_DIR = process.env.DATA_DIR
@@ -84,6 +99,15 @@ const DATA_DIR = process.env.DATA_DIR
 const DATA_FILE = path.join(DATA_DIR, 'app-state.json')
 
 export const seedState: StoreShape = {
+  users: [],
+  posts: [],
+  postInterests: [],
+  questionThreads: [],
+  questionReplies: [],
+  sessions: [],
+}
+
+export const testSeedState: StoreShape = {
   users: [
     {
       id: 'resident-lin',
@@ -91,6 +115,7 @@ export const seedState: StoreShape = {
       roomFragment: '12A',
       wechatHandle: 'linayi12a',
       deviceIdentityKey: 'seed-lin',
+      pinHash: seedPinHash('111111', 'seed-lin'),
     },
     {
       id: 'resident-zhou',
@@ -98,6 +123,7 @@ export const seedState: StoreShape = {
       roomFragment: '05C',
       wechatHandle: 'zhouzhou05',
       deviceIdentityKey: 'seed-zhou',
+      pinHash: seedPinHash('222222', 'seed-zhou'),
     },
     {
       id: 'resident-he',
@@ -105,6 +131,7 @@ export const seedState: StoreShape = {
       roomFragment: '07B',
       wechatHandle: 'he07b',
       deviceIdentityKey: 'seed-he',
+      pinHash: seedPinHash('333333', 'seed-he'),
     },
     {
       id: 'resident-ma',
@@ -112,6 +139,7 @@ export const seedState: StoreShape = {
       roomFragment: '16D',
       wechatHandle: 'may16d',
       deviceIdentityKey: 'seed-ma',
+      pinHash: seedPinHash('444444', 'seed-ma'),
     },
     {
       id: 'resident-chen',
@@ -119,6 +147,7 @@ export const seedState: StoreShape = {
       roomFragment: '08F',
       wechatHandle: 'chen08f',
       deviceIdentityKey: 'seed-chen',
+      pinHash: seedPinHash('555555', 'seed-chen'),
     },
   ],
   posts: [
@@ -281,6 +310,7 @@ export const seedState: StoreShape = {
       updatedAt: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(),
     },
   ],
+  sessions: [],
 }
 
 function ensureDataFile() {
@@ -297,6 +327,7 @@ function normalizeStore(raw: Partial<StoreShape>): { state: StoreShape; changed:
     postInterests: Array.isArray(raw.postInterests) ? raw.postInterests : [],
     questionThreads: Array.isArray(raw.questionThreads) ? raw.questionThreads : [],
     questionReplies: Array.isArray(raw.questionReplies) ? raw.questionReplies : [],
+    sessions: Array.isArray(raw.sessions) ? raw.sessions : [],
   }
 
   const changed =
@@ -304,7 +335,8 @@ function normalizeStore(raw: Partial<StoreShape>): { state: StoreShape; changed:
     !Array.isArray(raw.posts) ||
     !Array.isArray(raw.postInterests) ||
     !Array.isArray(raw.questionThreads) ||
-    !Array.isArray(raw.questionReplies)
+    !Array.isArray(raw.questionReplies) ||
+    !Array.isArray(raw.sessions)
 
   return { state, changed }
 }

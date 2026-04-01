@@ -1,4 +1,13 @@
-import type { AskThreadDetail, AskThreadSummary, PostItem, PostType, QuestionCategory, ResidentProfile } from './types'
+import type {
+  AskThreadDetail,
+  AskThreadSummary,
+  AuthState,
+  PostItem,
+  PostType,
+  QuestionCategory,
+  ResidentIdentityHint,
+  ResidentProfile,
+} from './types'
 
 const DEVICE_KEY = 'building-board-device-key'
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').trim()
@@ -8,8 +17,16 @@ function apiUrl(path: string) {
   return new URL(path, API_BASE_URL.endsWith('/') ? API_BASE_URL : `${API_BASE_URL}/`).toString()
 }
 
+function ensureDeviceIdentity() {
+  const existing = localStorage.getItem(DEVICE_KEY)
+  if (existing) return existing
+  const next = `device-${crypto.randomUUID()}`
+  localStorage.setItem(DEVICE_KEY, next)
+  return next
+}
+
 function getHeaders() {
-  const deviceIdentity = localStorage.getItem(DEVICE_KEY) ?? ''
+  const deviceIdentity = ensureDeviceIdentity()
   return {
     'Content-Type': 'application/json',
     'x-device-identity': deviceIdentity,
@@ -25,7 +42,7 @@ async function parseJson<T>(response: Response): Promise<T> {
 }
 
 export function getDeviceIdentity() {
-  return localStorage.getItem(DEVICE_KEY) ?? ''
+  return ensureDeviceIdentity()
 }
 
 export async function verifyBuildingCode(buildingCode: string) {
@@ -44,19 +61,42 @@ export async function verifyBuildingCode(buildingCode: string) {
 }
 
 export async function loadProfile() {
-  return parseJson<{ profile: ResidentProfile | null }>(
+  return parseJson<{ profile: ResidentProfile | null; authState: AuthState; residentIdentity: ResidentIdentityHint | null }>(
     await fetch(apiUrl('/api/profile'), {
       headers: getHeaders(),
+      credentials: 'include',
     }),
   )
 }
 
-export async function saveProfile(input: Omit<ResidentProfile, 'id'>) {
+export async function saveProfile(input: Omit<ResidentProfile, 'id'> & { pin: string }) {
   return parseJson<{ profile: ResidentProfile }>(
     await fetch(apiUrl('/api/profile'), {
       method: 'PUT',
       headers: getHeaders(),
+      credentials: 'include',
       body: JSON.stringify(input),
+    }),
+  )
+}
+
+export async function loginWithPin(input: { roomFragment: string; wechatHandle: string; pin: string }) {
+  return parseJson<{ profile: ResidentProfile }>(
+    await fetch(apiUrl('/api/auth/login'), {
+      method: 'POST',
+      headers: getHeaders(),
+      credentials: 'include',
+      body: JSON.stringify(input),
+    }),
+  )
+}
+
+export async function logoutSession() {
+  return parseJson<{ ok: boolean }>(
+    await fetch(apiUrl('/api/auth/logout'), {
+      method: 'POST',
+      headers: getHeaders(),
+      credentials: 'include',
     }),
   )
 }
@@ -67,6 +107,7 @@ export async function loadPosts(type: TabKeyApi) {
   return parseJson<{ posts: PostItem[] }>(
     await fetch(apiUrl(`/api/posts?type=${type}`), {
       headers: getHeaders(),
+      credentials: 'include',
     }),
   )
 }
@@ -75,6 +116,7 @@ export async function loadPost(id: string) {
   return parseJson<{ post: PostItem }>(
     await fetch(apiUrl(`/api/posts/${id}`), {
       headers: getHeaders(),
+      credentials: 'include',
     }),
   )
 }
@@ -98,6 +140,31 @@ export async function createPost(input: {
     await fetch(apiUrl('/api/posts'), {
       method: 'POST',
       headers: getHeaders(),
+      credentials: 'include',
+      body: JSON.stringify(input),
+    }),
+  )
+}
+
+export async function updatePost(id: string, input: {
+  title: string
+  category: string
+  priceType?: 'free' | 'paid'
+  priceCny?: number
+  description?: string
+  pickupNote?: string
+  imageUrl?: string
+  fitMetadata?: {
+    sizeNote?: string
+    liftFit?: string
+    twoPersonCarry?: boolean
+  }
+}) {
+  return parseJson<{ post: PostItem }>(
+    await fetch(apiUrl(`/api/posts/${id}`), {
+      method: 'PATCH',
+      headers: getHeaders(),
+      credentials: 'include',
       body: JSON.stringify(input),
     }),
   )
@@ -108,6 +175,7 @@ export async function createInterest(id: string) {
     await fetch(apiUrl(`/api/posts/${id}/interests`), {
       method: 'POST',
       headers: getHeaders(),
+      credentials: 'include',
     }),
   )
 }
@@ -117,6 +185,7 @@ export async function claimPost(id: string, claimedByUserId: string) {
     await fetch(apiUrl(`/api/posts/${id}/claim`), {
       method: 'POST',
       headers: getHeaders(),
+      credentials: 'include',
       body: JSON.stringify({ claimedByUserId }),
     }),
   )
@@ -127,6 +196,7 @@ export async function removePost(id: string) {
     await fetch(apiUrl(`/api/posts/${id}/remove`), {
       method: 'POST',
       headers: getHeaders(),
+      credentials: 'include',
     }),
   )
 }
@@ -136,6 +206,7 @@ export async function uploadImage(file: File) {
     await fetch(apiUrl('/api/uploads/sign'), {
       method: 'POST',
       headers: getHeaders(),
+      credentials: 'include',
     }),
   )
 
@@ -148,6 +219,7 @@ export async function uploadImage(file: File) {
       headers: {
         'x-device-identity': getDeviceIdentity(),
       },
+      credentials: 'include',
       body: formData,
     }),
   )
@@ -164,6 +236,7 @@ export async function loadAskThreads(limit = 20, preview = false) {
   return parseJson<{ threads: AskThreadSummary[] }>(
     await fetch(apiUrl(`/api/ask/threads?${params.toString()}`), {
       headers: getHeaders(),
+      credentials: 'include',
     }),
   )
 }
@@ -172,6 +245,7 @@ export async function loadAskThread(id: string) {
   return parseJson<{ thread: AskThreadDetail }>(
     await fetch(apiUrl(`/api/ask/threads/${id}`), {
       headers: getHeaders(),
+      credentials: 'include',
     }),
   )
 }
@@ -181,6 +255,7 @@ export async function createAskThread(input: { title: string; body?: string; ima
     await fetch(apiUrl('/api/ask/threads'), {
       method: 'POST',
       headers: getHeaders(),
+      credentials: 'include',
       body: JSON.stringify(input),
     }),
   )
@@ -191,6 +266,7 @@ export async function createAskReply(threadId: string, input: { body: string; pa
     await fetch(apiUrl(`/api/ask/threads/${threadId}/replies`), {
       method: 'POST',
       headers: getHeaders(),
+      credentials: 'include',
       body: JSON.stringify(input),
     }),
   )

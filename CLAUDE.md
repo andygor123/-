@@ -12,11 +12,15 @@ This repo now supports two deployment shapes:
 
 ## Current Production Notes
 
-- Backend server: Tencent Cloud Lighthouse
-- App path: `/home/ubuntu/app`
-- Data path: `/home/ubuntu/app-data`
+- Production server: Tencent Cloud Hong Kong server
+- Server IP: `43.129.208.41`
+- App path: `/root/app`
+- Data path: `/root/app-data`
 - PM2 process: `building-board`
-- Public site currently points to the server directly
+- Reverse proxy: `openresty`
+- Public site:
+  - `https://loulihuanwu.site`
+  - `https://www.loulihuanwu.site`
 
 ## Environment Variables
 
@@ -51,3 +55,47 @@ If migrating from the old layout, copy legacy uploads once before deploy:
 mkdir -p /home/ubuntu/app-data/uploads
 cp -Rn /home/ubuntu/app/public/uploads/. /home/ubuntu/app-data/uploads/ 2>/dev/null || true
 ```
+
+## Deploy Configuration
+
+- Platform: `custom/manual`
+- Production URL: `https://loulihuanwu.site`
+- Health check URL: `https://loulihuanwu.site/health`
+- Production host: `root@43.129.208.41`
+- App path: `/root/app`
+- Data path: `/root/app-data`
+- Process manager: `pm2`
+- Process name: `building-board`
+- Reverse proxy: `openresty`
+
+### Pre-deploy checks
+
+Run locally before deploying:
+
+```bash
+npm test
+npm run build
+```
+
+### Manual deploy flow
+
+From the repo root:
+
+```bash
+tar --exclude='.git' --exclude='node_modules' --exclude='dist' --exclude='.context' -czf /tmp/las-vegas-deploy.tgz .
+scp /tmp/las-vegas-deploy.tgz root@43.129.208.41:/root/
+ssh root@43.129.208.41 'rm -rf /root/app && mkdir -p /root/app && tar -xzf /root/las-vegas-deploy.tgz -C /root/app && cd /root/app && npm install && npm run build && pm2 restart building-board && pm2 save'
+```
+
+### Post-deploy verification
+
+Check:
+
+```bash
+curl -sf https://loulihuanwu.site/health
+```
+
+Notes:
+
+- Right after `pm2 restart building-board`, there can be a brief `502` while the app process comes back up.
+- Wait a few seconds, then re-run the health check.

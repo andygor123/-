@@ -6,6 +6,8 @@ import multer from 'multer'
 import {
   readStore,
   seedState,
+  testSeedState,
+  type SessionRecord,
   updateStore,
   writeStore,
   type PostItem,
@@ -31,7 +33,9 @@ const DIST_DIR = path.join(ROOT, 'dist')
 const DIST_INDEX = path.join(DIST_DIR, 'index.html')
 const UPLOAD_TOKEN_TTL_MS = 10 * 60 * 1000
 const ENTRY_TOKEN_TTL_MS = 24 * 60 * 60 * 1000
+const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000
 const CLAIM_ARCHIVE_AFTER_MS = 24 * 60 * 60 * 1000
+const SESSION_COOKIE = 'resident_session'
 const uploadTickets = new Map<string, { userId: string; expiresAt: number }>()
 const entryTickets = new Map<string, number>()
 
@@ -136,6 +140,15 @@ function residentIdentity(userId: string, users: ResidentProfile[]) {
   }
 }
 
+function publicProfile(profile: ResidentProfile) {
+  return {
+    id: profile.id,
+    nickname: profile.nickname,
+    roomFragment: profile.roomFragment,
+    wechatHandle: profile.wechatHandle,
+  }
+}
+
 function latestReplyPreview(threadId: string, replies: QuestionReply[], users: ResidentProfile[]) {
   const latest = [...replies]
     .filter((reply) => reply.threadId === threadId && !reply.removedAt)
@@ -170,6 +183,96 @@ function cleanupTempUpload(file?: Express.Multer.File | null) {
   fs.unlinkSync(file.path)
 }
 
+function parseCookieValue(req: express.Request, key: string) {
+  const cookieHeader = String(req.header('cookie') ?? '')
+  if (!cookieHeader) return ''
+  for (const part of cookieHeader.split(';')) {
+    const [rawName, ...rawValue] = part.trim().split('=')
+    if (rawName === key) {
+      return decodeURIComponent(rawValue.join('='))
+    }
+  }
+  return ''
+}
+
+function requestIsSecure(req: express.Request) {
+  return req.secure || String(req.header('x-forwarded-proto') ?? '').toLowerCase() === 'https'
+}
+
+function setSessionCookie(req: express.Request, res: express.Response, sessionId: string) {
+  const secure = requestIsSecure(req)
+  res.setHeader(
+    'Set-Cookie',
+    `${SESSION_COOKIE}=${encodeURIComponent(sessionId)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}${secure ? '; Secure' : ''}`,
+  )
+}
+
+function clearSessionCookie(req: express.Request, res: express.Response) {
+  const secure = requestIsSecure(req)
+  res.setHeader(
+    'Set-Cookie',
+    `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secure ? '; Secure' : ''}`,
+  )
+}
+
+function normalizeCredential(value: unknown) {
+  return String(value ?? '').trim()
+}
+
+function hashPin(pin: string) {
+  const salt = crypto.randomBytes(16).toString('hex')
+  const digest = crypto.scryptSync(pin, salt, 64).toString('hex')
+  return `scrypt:${salt}:${digest}`
+}
+
+function verifyPin(pin: string, storedHash?: string) {
+  if (!storedHash) return false
+  const [algorithm, salt, digest] = storedHash.split(':')
+  if (algorithm !== 'scrypt' || !salt || !digest) return false
+  const candidate = crypto.scryptSync(pin, salt, 64)
+  const expected = Buffer.from(digest, 'hex')
+  if (candidate.length !== expected.length) return false
+  return crypto.timingSafeEqual(candidate, expected)
+}
+
+function normalizeAuthLookup(roomFragment: string, wechatHandle: string) {
+  return {
+    roomFragment: roomFragment.trim().toUpperCase(),
+    wechatHandle: wechatHandle.trim().toLowerCase(),
+  }
+}
+
+function sessionUser(req: express.Request) {
+  const sessionId = parseCookieValue(req, SESSION_COOKIE)
+  if (!sessionId) return null
+
+  const store = readStore()
+  const session = store.sessions.find((item) => item.id === sessionId)
+  if (!session) return null
+  if (new Date(session.expiresAt).getTime() < Date.now()) {
+    updateStore((current) => ({
+      ...current,
+      sessions: current.sessions.filter((item) => item.id !== sessionId),
+    }))
+    return null
+  }
+
+  const user = store.users.find((item) => item.id === session.userId)
+  if (!user) return null
+  return { user, session, store }
+}
+
+function createSessionRecord(userId: string, deviceIdentityKey: string): SessionRecord {
+  const now = new Date()
+  return {
+    id: `session-${crypto.randomUUID()}`,
+    userId,
+    deviceIdentityKey,
+    createdAt: now.toISOString(),
+    expiresAt: new Date(now.getTime() + SESSION_TTL_MS).toISOString(),
+  }
+}
+
 declare global {
   namespace Express {
     interface Request {
@@ -194,6 +297,9 @@ export function createApp() {
     if (allowOrigin) {
       res.header('Access-Control-Allow-Origin', allowOrigin)
       res.header('Vary', 'Origin')
+      if (allowOrigin !== '*') {
+        res.header('Access-Control-Allow-Credentials', 'true')
+      }
       res.header('Access-Control-Allow-Headers', 'Content-Type, x-device-identity')
       res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,OPTIONS')
     }
@@ -206,6 +312,7 @@ export function createApp() {
   })
 
   app.use(express.json({ limit: '4mb' }))
+  app.use('/.well-known', express.static(path.join(ROOT, 'public', '.well-known'), { dotfiles: 'allow' }))
   app.use(express.static(path.join(ROOT, 'public')))
   app.use('/uploads', express.static(UPLOAD_DIR))
 
@@ -220,49 +327,19 @@ export function createApp() {
 
   if (process.env.ENABLE_TEST_API === '1') {
     app.post('/api/test/reset', (_req, res) => {
-      writeStore(JSON.parse(JSON.stringify(seedState)))
+      writeStore(JSON.parse(JSON.stringify(testSeedState)))
       res.json({ ok: true })
     })
   }
 
-  function profileFromHeader() {
+  function requireSession() {
     return (req: express.Request, res: express.Response, next: express.NextFunction) => {
-      const deviceIdentityKey = req.header('x-device-identity')
-      if (!deviceIdentityKey) {
-        return res.status(401).json({ error: 'missing_device_identity' })
+      const active = sessionUser(req)
+      if (!active) {
+        return res.status(401).json({ error: 'auth_required' })
       }
 
-      const store = readStore()
-      const user = store.users.find((item) => item.deviceIdentityKey === deviceIdentityKey)
-      if (!user) {
-        return res.status(401).json({ error: 'unknown_device_identity' })
-      }
-
-      req.user = user
-      return next()
-    }
-  }
-
-  function buildingAccessFromHeader() {
-    return (req: express.Request, res: express.Response, next: express.NextFunction) => {
-      const deviceIdentityKey = String(req.header('x-device-identity') ?? '').trim()
-      if (!deviceIdentityKey) {
-        return res.status(401).json({ error: 'missing_device_identity' })
-      }
-
-      const store = readStore()
-      const user = store.users.find((item) => item.deviceIdentityKey === deviceIdentityKey)
-      if (user) {
-        req.user = user
-        return next()
-      }
-
-      const entryExpiresAt = entryTickets.get(deviceIdentityKey)
-      if (!entryExpiresAt || entryExpiresAt < Date.now()) {
-        entryTickets.delete(deviceIdentityKey)
-        return res.status(401).json({ error: 'building_access_required' })
-      }
-
+      req.user = active.user
       return next()
     }
   }
@@ -294,43 +371,117 @@ export function createApp() {
   })
 
   app.get('/api/profile', (req, res) => {
-    const deviceIdentityKey = req.header('x-device-identity')
+    const active = sessionUser(req)
+    if (active) {
+      return res.json({
+        profile: publicProfile(active.user),
+        authState: 'logged_in',
+        residentIdentity: {
+          nickname: active.user.nickname,
+          roomFragment: active.user.roomFragment,
+          wechatHandle: active.user.wechatHandle,
+        },
+      })
+    }
+
+    const deviceIdentityKey = String(req.header('x-device-identity') ?? '').trim()
     if (!deviceIdentityKey) {
-      return res.json({ profile: null })
+      return res.json({ profile: null, authState: 'anonymous', residentIdentity: null })
     }
 
     const store = applyPostLifecycle(readStore())
-    const profile = store.users.find((user) => user.deviceIdentityKey === deviceIdentityKey) ?? null
-    return res.json({ profile })
+    const resident = store.users.find((user) => user.deviceIdentityKey === deviceIdentityKey) ?? null
+    if (resident) {
+      const session = createSessionRecord(resident.id, deviceIdentityKey)
+      updateStore((current) => ({
+        ...current,
+        sessions: [
+          session,
+          ...current.sessions.filter((item) => item.userId !== resident.id || item.deviceIdentityKey !== deviceIdentityKey),
+        ],
+      }))
+      setSessionCookie(req, res, session.id)
+      return res.json({
+        profile: publicProfile(resident),
+        authState: 'logged_in',
+        residentIdentity: {
+          nickname: resident.nickname,
+          roomFragment: resident.roomFragment,
+          wechatHandle: resident.wechatHandle,
+        },
+      })
+    }
+
+    const entryExpiresAt = entryTickets.get(deviceIdentityKey)
+    if (entryExpiresAt && entryExpiresAt >= Date.now()) {
+      return res.json({ profile: null, authState: 'needs_signup', residentIdentity: null })
+    }
+
+    entryTickets.delete(deviceIdentityKey)
+    return res.json({ profile: null, authState: 'anonymous', residentIdentity: null })
   })
 
   app.put('/api/profile', (req, res) => {
-    const { nickname, roomFragment, wechatHandle } = req.body ?? {}
+    const { nickname, roomFragment, wechatHandle, pin } = req.body ?? {}
     const deviceIdentityKey = String(req.header('x-device-identity') ?? '').trim()
 
     if (!deviceIdentityKey) {
       return res.status(400).json({ error: 'missing_device_identity' })
     }
 
-    if (!String(nickname ?? '').trim() || !String(roomFragment ?? '').trim() || !String(wechatHandle ?? '').trim()) {
+    if (
+      !String(nickname ?? '').trim() ||
+      !String(roomFragment ?? '').trim() ||
+      !String(wechatHandle ?? '').trim()
+    ) {
       return res.status(400).json({ error: 'invalid_profile' })
     }
 
+    const trimmedPin = normalizeCredential(pin)
+    if (trimmedPin && !/^\d{6}$/.test(trimmedPin)) {
+      return res.status(400).json({ error: 'invalid_pin' })
+    }
+
+    const active = sessionUser(req)
     const current = readStore()
-    const existingProfile = current.users.find((user) => user.deviceIdentityKey === deviceIdentityKey)
+    const existingProfile = active?.user ?? null
+    const deviceBoundResident = current.users.find((user) => user.deviceIdentityKey === deviceIdentityKey)
     const entryExpiresAt = entryTickets.get(deviceIdentityKey)
+
+    if (!existingProfile && deviceBoundResident) {
+      return res.status(401).json({ error: 'login_required' })
+    }
 
     if (!existingProfile && (!entryExpiresAt || entryExpiresAt < Date.now())) {
       entryTickets.delete(deviceIdentityKey)
       return res.status(401).json({ error: 'building_access_required' })
     }
 
+    const normalizedLookup = normalizeAuthLookup(String(roomFragment), String(wechatHandle))
+    const duplicateResident = current.users.find(
+      (user) =>
+        user.id !== existingProfile?.id &&
+        normalizeAuthLookup(user.roomFragment, user.wechatHandle).roomFragment === normalizedLookup.roomFragment &&
+        normalizeAuthLookup(user.roomFragment, user.wechatHandle).wechatHandle === normalizedLookup.wechatHandle,
+    )
+    if (duplicateResident) {
+      return res.status(409).json({ error: 'resident_identity_taken' })
+    }
+
+    if (!existingProfile && !trimmedPin) {
+      return res.status(400).json({ error: 'pin_required' })
+    }
+
     const nextState = updateStore((store) => {
-      const existing = store.users.find((user) => user.deviceIdentityKey === deviceIdentityKey)
+      const existing = existingProfile ? store.users.find((user) => user.id === existingProfile.id) : undefined
       if (existing) {
         existing.nickname = String(nickname).trim()
         existing.roomFragment = String(roomFragment).trim()
         existing.wechatHandle = String(wechatHandle).trim()
+        existing.deviceIdentityKey = deviceIdentityKey
+        if (trimmedPin) {
+          existing.pinHash = hashPin(trimmedPin)
+        }
         return { ...store, users: [...store.users] }
       }
 
@@ -340,20 +491,93 @@ export function createApp() {
         roomFragment: String(roomFragment).trim(),
         wechatHandle: String(wechatHandle).trim(),
         deviceIdentityKey,
+        pinHash: hashPin(trimmedPin),
       }
+      const session = createSessionRecord(newUser.id, deviceIdentityKey)
       return {
         ...store,
         users: [newUser, ...store.users],
+        sessions: [session, ...store.sessions],
       }
     })
 
     entryTickets.delete(deviceIdentityKey)
 
     const profile = nextState.users.find((user) => user.deviceIdentityKey === deviceIdentityKey)!
-    return res.json({ profile })
+    const createdSession = nextState.sessions.find((session) => session.userId === profile.id && session.deviceIdentityKey === deviceIdentityKey)
+    if (createdSession) {
+      setSessionCookie(req, res, createdSession.id)
+    }
+    return res.json({ profile: publicProfile(profile) })
   })
 
-  app.get('/api/posts', buildingAccessFromHeader(), (req, res) => {
+  app.post('/api/auth/login', (req, res) => {
+    const roomFragment = normalizeCredential(req.body?.roomFragment)
+    const wechatHandle = normalizeCredential(req.body?.wechatHandle)
+    const pin = normalizeCredential(req.body?.pin)
+    const deviceIdentityKey = String(req.header('x-device-identity') ?? '').trim() || `device-${crypto.randomUUID()}`
+    const entryExpiresAt = entryTickets.get(deviceIdentityKey)
+
+    if (!roomFragment || !wechatHandle || !/^\d{6}$/.test(pin)) {
+      return res.status(400).json({ error: 'invalid_login' })
+    }
+
+    if (!entryExpiresAt || entryExpiresAt < Date.now()) {
+      entryTickets.delete(deviceIdentityKey)
+      return res.status(401).json({ error: 'building_access_required' })
+    }
+
+    const current = readStore()
+    const normalizedLookup = normalizeAuthLookup(roomFragment, wechatHandle)
+    const resident = current.users.find((user) => {
+      const userLookup = normalizeAuthLookup(user.roomFragment, user.wechatHandle)
+      return userLookup.roomFragment === normalizedLookup.roomFragment && userLookup.wechatHandle === normalizedLookup.wechatHandle
+    })
+
+    if (!resident || !verifyPin(pin, resident.pinHash)) {
+      return res.status(401).json({ error: 'invalid_credentials' })
+    }
+
+    const session = createSessionRecord(resident.id, deviceIdentityKey)
+    updateStore((store) => ({
+      ...store,
+      users: store.users.map((user) =>
+        user.id === resident.id
+          ? {
+              ...user,
+              deviceIdentityKey,
+            }
+          : user,
+      ),
+      sessions: [
+        session,
+        ...store.sessions.filter((item) => item.userId !== resident.id || item.deviceIdentityKey !== deviceIdentityKey),
+      ],
+    }))
+
+    entryTickets.delete(deviceIdentityKey)
+    setSessionCookie(req, res, session.id)
+    return res.json({
+      profile: publicProfile({
+        ...resident,
+        deviceIdentityKey,
+      }),
+    })
+  })
+
+  app.post('/api/auth/logout', (req, res) => {
+    const sessionId = parseCookieValue(req, SESSION_COOKIE)
+    if (sessionId) {
+      updateStore((store) => ({
+        ...store,
+        sessions: store.sessions.filter((item) => item.id !== sessionId),
+      }))
+    }
+    clearSessionCookie(req, res)
+    return res.json({ ok: true })
+  })
+
+  app.get('/api/posts', requireSession(), (req, res) => {
     const type = String(req.query.type ?? 'available') as 'available' | 'wanted' | 'history'
     const store = applyPostLifecycle(readStore())
     const viewerId = req.user?.id
@@ -386,7 +610,7 @@ export function createApp() {
     return res.json({ posts: payload })
   })
 
-  app.get('/api/posts/:id', buildingAccessFromHeader(), (req, res) => {
+  app.get('/api/posts/:id', requireSession(), (req, res) => {
     const store = applyPostLifecycle(readStore())
     const post = store.posts.find((item) => item.id === req.params.id)
     if (!post) {
@@ -394,9 +618,7 @@ export function createApp() {
     }
 
     const owner = store.users.find((user) => user.id === post.userId)
-    const viewer = req.header('x-device-identity')
-      ? store.users.find((user) => user.deviceIdentityKey === req.header('x-device-identity'))
-      : null
+    const viewer = req.user ?? null
     const alreadyInterested = viewer
       ? store.postInterests.some((interest) => interest.postId === post.id && interest.userId === viewer.id)
       : false
@@ -433,7 +655,7 @@ export function createApp() {
     })
   })
 
-  app.get('/api/ask/threads', buildingAccessFromHeader(), (req, res) => {
+  app.get('/api/ask/threads', requireSession(), (req, res) => {
     const store = readStore()
     const limit = Math.max(1, Math.min(20, Number(req.query.limit ?? 20) || 20))
 
@@ -446,7 +668,7 @@ export function createApp() {
     return res.json({ threads })
   })
 
-  app.get('/api/ask/threads/:id', buildingAccessFromHeader(), (req, res) => {
+  app.get('/api/ask/threads/:id', requireSession(), (req, res) => {
     const store = readStore()
     const thread = store.questionThreads.find((item) => item.id === req.params.id && !item.removedAt)
     if (!thread) {
@@ -477,7 +699,7 @@ export function createApp() {
     })
   })
 
-  app.post('/api/ask/threads', profileFromHeader(), (req, res) => {
+  app.post('/api/ask/threads', requireSession(), (req, res) => {
     const user = req.user!
     const title = String(req.body?.title ?? '').trim()
     const body = String(req.body?.body ?? '').trim()
@@ -512,7 +734,7 @@ export function createApp() {
     })
   })
 
-  app.post('/api/ask/threads/:id/replies', profileFromHeader(), (req, res) => {
+  app.post('/api/ask/threads/:id/replies', requireSession(), (req, res) => {
     const user = req.user!
     const threadId = req.params.id
     const body = String(req.body?.body ?? '').trim()
@@ -571,7 +793,7 @@ export function createApp() {
     return res.status(201).json({ reply: { id: reply.id } })
   })
 
-  app.post('/api/posts', profileFromHeader(), (req, res) => {
+  app.post('/api/posts', requireSession(), (req, res) => {
     const user = req.user!
     const { postType, title, category, priceType, priceCny, description, pickupNote, imageUrl, fitMetadata } = req.body ?? {}
 
@@ -618,7 +840,66 @@ export function createApp() {
     return res.status(201).json({ post })
   })
 
-  app.post('/api/posts/:id/interests', profileFromHeader(), (req, res) => {
+  app.patch('/api/posts/:id', requireSession(), (req, res) => {
+    const user = req.user!
+    const postId = req.params.id
+    const current = readStore()
+    const existing = current.posts.find((item) => item.id === postId)
+
+    if (!existing) {
+      return res.status(404).json({ error: 'post_not_found' })
+    }
+
+    if (existing.userId !== user.id) {
+      return res.status(403).json({ error: 'not_post_owner' })
+    }
+
+    if (existing.status !== 'available') {
+      return res.status(400).json({ error: 'post_not_editable' })
+    }
+
+    const { title, category, priceType, priceCny, description, pickupNote, imageUrl, fitMetadata } = req.body ?? {}
+
+    if (!String(title ?? '').trim() || !String(category ?? '').trim()) {
+      return res.status(400).json({ error: 'missing_required_fields' })
+    }
+
+    const normalizedPriceType = priceType === 'paid' ? 'paid' : 'free'
+    const normalizedPriceCny = normalizedPriceType === 'paid' ? Number(priceCny) : undefined
+    if (normalizedPriceType === 'paid' && (!Number.isFinite(normalizedPriceCny) || normalizedPriceCny <= 0)) {
+      return res.status(400).json({ error: 'invalid_price' })
+    }
+
+    const normalizedImageUrl = String(imageUrl ?? '').trim() || undefined
+    if (existing.postType === 'available' && !normalizedImageUrl) {
+      return res.status(400).json({ error: 'image_required_for_available' })
+    }
+
+    const updatedAt = new Date().toISOString()
+    const updated = updateStore((store) => ({
+      ...store,
+      posts: store.posts.map((item) =>
+        item.id === postId
+          ? {
+              ...item,
+              title: String(title).trim(),
+              category: String(category).trim(),
+              priceType: normalizedPriceType,
+              priceCny: normalizedPriceType === 'paid' ? Math.round(normalizedPriceCny as number) : undefined,
+              description: String(description ?? '').trim() || undefined,
+              pickupNote: String(pickupNote ?? '').trim() || undefined,
+              imageUrl: normalizedImageUrl,
+              fitMetadataJson: fitMetadata ?? undefined,
+              updatedAt,
+            }
+          : item,
+      ),
+    }))
+
+    return res.json({ post: updated.posts.find((item) => item.id === postId) })
+  })
+
+  app.post('/api/posts/:id/interests', requireSession(), (req, res) => {
     const user = req.user!
     const postId = req.params.id
 
@@ -647,7 +928,7 @@ export function createApp() {
     return res.status(201).json({ interest })
   })
 
-  app.post('/api/posts/:id/claim', profileFromHeader(), (req, res) => {
+  app.post('/api/posts/:id/claim', requireSession(), (req, res) => {
     const user = req.user!
     const claimedByUserId = String(req.body?.claimedByUserId ?? '').trim()
     const postId = req.params.id
@@ -691,7 +972,7 @@ export function createApp() {
     return res.json({ post: updated.posts.find((item) => item.id === postId) })
   })
 
-  app.post('/api/posts/:id/remove', profileFromHeader(), (req, res) => {
+  app.post('/api/posts/:id/remove', requireSession(), (req, res) => {
     const user = req.user!
     const postId = req.params.id
 
@@ -722,7 +1003,7 @@ export function createApp() {
     return res.json({ post: updated.posts.find((item) => item.id === postId) })
   })
 
-  app.post('/api/uploads/sign', profileFromHeader(), (req, res) => {
+  app.post('/api/uploads/sign', requireSession(), (req, res) => {
     const user = req.user!
     const uploadToken = crypto.randomUUID()
     uploadTickets.set(uploadToken, {
@@ -737,7 +1018,7 @@ export function createApp() {
     })
   })
 
-  app.put('/api/uploads/local/:token', profileFromHeader(), upload.single('file'), (req, res) => {
+  app.put('/api/uploads/local/:token', requireSession(), upload.single('file'), (req, res) => {
     const user = req.user!
     const token = String(req.params.token)
     const ticket = uploadTickets.get(token)
