@@ -43,6 +43,7 @@ export interface PostInterest {
   id: string
   postId: string
   userId: string
+  offerPriceCny?: number
   createdAt: string
 }
 
@@ -67,6 +68,7 @@ export interface QuestionReply {
   parentReplyId?: string
   depth: number
   body: string
+  imageUrl?: string
   createdAt: string
   updatedAt: string
   removedAt?: string
@@ -205,6 +207,7 @@ export const testSeedState: StoreShape = {
       id: 'interest-1',
       postId: 'post-1',
       userId: 'resident-zhou',
+      offerPriceCny: 70,
       createdAt: new Date(Date.now() - 45 * 60 * 1000).toISOString(),
     },
     {
@@ -258,6 +261,7 @@ export const testSeedState: StoreShape = {
       userId: 'resident-he',
       depth: 1,
       body: '我家是 54cm 深，门还能正常开，55cm 以上就比较悬。',
+      imageUrl: '/sample-chair.svg',
       createdAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
       updatedAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
     },

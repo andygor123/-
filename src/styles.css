@@ -519,6 +519,10 @@ a {
   background: rgba(255, 255, 255, 0.72);
 }
 
+.ask-reply.deleted {
+  background: rgba(245, 243, 238, 0.92);
+}
+
 .ask-reply.depth-2,
 .ask-reply.depth-3 {
   margin-left: 12px;
@@ -534,10 +538,20 @@ a {
   gap: 10px;
 }
 
+.ask-reply-image {
+  width: min(100%, 220px);
+  border-radius: 14px;
+  border: 1px solid rgba(92, 106, 84, 0.1);
+}
+
 .ask-inline-button {
   min-height: 34px;
   padding-inline: 12px;
   font-size: 0.84rem;
+}
+
+.ask-danger-button {
+  color: #7b4238;
 }
 
 .ask-collapse-button {
@@ -579,6 +593,10 @@ a {
   margin: 0;
   font-size: 0.84rem;
   line-height: 1.5;
+}
+
+.ask-reply-upload {
+  gap: 8px;
 }
 
 .section-hint {
@@ -1289,7 +1307,7 @@ a {
 .interest-option {
   min-width: 116px;
   display: grid;
-  gap: 2px;
+  gap: 3px;
   justify-items: start;
   padding: 12px 14px;
   border-radius: 16px;
@@ -1303,6 +1321,11 @@ a {
   color: #6a7366;
 }
 
+.interest-option small {
+  font-size: 0.82rem;
+  color: #876739;
+}
+
 .interest-option.active {
   background: #202f1e;
   color: #f7fbf3;
@@ -1310,6 +1333,34 @@ a {
 
 .interest-option.active span {
   color: rgba(247, 251, 243, 0.78);
+}
+
+.interest-option.active small {
+  color: rgba(255, 244, 210, 0.92);
+}
+
+.offer-sheet {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+  padding: 14px;
+  border-radius: 18px;
+  background: rgba(255, 249, 239, 0.9);
+  border: 1px solid rgba(173, 135, 64, 0.14);
+}
+
+.offer-sheet-copy {
+  display: grid;
+  gap: 4px;
+}
+
+.offer-sheet-copy strong {
+  color: #3f3118;
+}
+
+.offer-sheet-copy p {
+  margin: 0;
+  color: #6f6557;
 }
 
 .error-text {

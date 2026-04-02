@@ -221,6 +221,84 @@ describe('server app', () => {
     expect(response.body.error).toBe('claimer_not_interested')
   })
 
+  it('records an optional offer on interest for paid available posts and lets the viewer update it', async () => {
+    const app = createApp()
+    const agent = request.agent(app)
+
+    await loginSeedAgent(agent, {
+      roomFragment: '08F',
+      wechatHandle: 'chen08f',
+      pin: '555555',
+      deviceIdentityKey: 'seed-chen',
+    })
+
+    const createResponse = await agent
+      .post('/api/posts/post-1/interests')
+      .send({
+        offerPriceCny: 68,
+      })
+
+    expect(createResponse.status).toBe(201)
+    expect(createResponse.body.interest.offerPriceCny).toBe(68)
+
+    const updateResponse = await agent
+      .post('/api/posts/post-1/interests')
+      .send({
+        offerPriceCny: 72,
+      })
+
+    expect(updateResponse.status).toBe(200)
+    expect(updateResponse.body.interest.offerPriceCny).toBe(72)
+
+    const detailResponse = await agent.get('/api/posts/post-1')
+
+    expect(detailResponse.status).toBe(200)
+    expect(detailResponse.body.post.viewerOfferPriceCny).toBe(72)
+    expect(
+      detailResponse.body.post.interestedResidents.find((resident: { userId: string }) => resident.userId === 'resident-chen')
+        ?.offerPriceCny,
+    ).toBe(72)
+  })
+
+  it('rejects offer prices on free giveaway posts', async () => {
+    writeStore({
+      ...JSON.parse(JSON.stringify(testSeedState)),
+      posts: [
+        ...JSON.parse(JSON.stringify(testSeedState)).posts,
+        {
+          id: 'post-free-offer',
+          userId: 'resident-lin',
+          postType: 'available',
+          status: 'available',
+          title: '免费折叠桌',
+          category: '家具',
+          priceType: 'free',
+          imageUrl: '/sample-bookshelf.svg',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+    })
+    const app = createApp()
+    const agent = request.agent(app)
+
+    await loginSeedAgent(agent, {
+      roomFragment: '08F',
+      wechatHandle: 'chen08f',
+      pin: '555555',
+      deviceIdentityKey: 'seed-chen',
+    })
+
+    const response = await agent
+      .post('/api/posts/post-free-offer/interests')
+      .send({
+        offerPriceCny: 20,
+      })
+
+    expect(response.status).toBe(400)
+    expect(response.body.error).toBe('offer_not_supported')
+  })
+
   it('lets the post owner edit their available post', async () => {
     const app = createApp()
     const agent = request.agent(app)
@@ -438,6 +516,96 @@ describe('server app', () => {
 
     expect(response.status).toBe(201)
     expect(response.body.thread.imageUrl).toBe('/uploads/test-corner.jpg')
+  })
+
+  it('creates ask reply with optional image url and returns it from detail API', async () => {
+    const app = createApp()
+    const agent = request.agent(app)
+
+    await loginSeedAgent(agent, {
+      roomFragment: '12A',
+      wechatHandle: 'linayi12a',
+      pin: '111111',
+      deviceIdentityKey: 'seed-lin',
+    })
+
+    const createResponse = await agent
+      .post('/api/ask/threads/thread-1/replies')
+      .send({
+        body: '',
+        imageUrl: '/uploads/reply-photo.jpg',
+      })
+
+    expect(createResponse.status).toBe(201)
+
+    const detailResponse = await agent.get('/api/ask/threads/thread-1')
+    const createdReply = detailResponse.body.thread.replies.find((reply: { id: string }) => reply.id === createResponse.body.reply.id)
+
+    expect(detailResponse.status).toBe(200)
+    expect(createdReply.imageUrl).toBe('/uploads/reply-photo.jpg')
+  })
+
+  it('soft deletes own ask reply and preserves the placeholder in detail', async () => {
+    const app = createApp()
+    const agent = request.agent(app)
+
+    await loginSeedAgent(agent, {
+      roomFragment: '16D',
+      wechatHandle: 'may16d',
+      pin: '444444',
+      deviceIdentityKey: 'seed-ma',
+    })
+
+    const removeResponse = await agent.post('/api/ask/replies/qreply-3/remove')
+
+    expect(removeResponse.status).toBe(200)
+
+    const detailResponse = await agent.get('/api/ask/threads/thread-1')
+    const removedReply = detailResponse.body.thread.replies.find((reply: { id: string }) => reply.id === 'qreply-3')
+
+    expect(removedReply.body).toBe('该内容已删除')
+    expect(removedReply.imageUrl).toBeNull()
+    expect(removedReply.isDeleted).toBe(true)
+  })
+
+  it('soft deletes own ask thread so it disappears from the feed', async () => {
+    const app = createApp()
+    const agent = request.agent(app)
+
+    await loginSeedAgent(agent, {
+      roomFragment: '05C',
+      wechatHandle: 'zhouzhou05',
+      pin: '222222',
+      deviceIdentityKey: 'seed-zhou',
+    })
+
+    const removeResponse = await agent.post('/api/ask/threads/thread-1/remove')
+    expect(removeResponse.status).toBe(200)
+
+    const listResponse = await agent.get('/api/ask/threads?limit=10')
+    expect(listResponse.status).toBe(200)
+    expect(listResponse.body.threads.some((thread: { id: string }) => thread.id === 'thread-1')).toBe(false)
+
+    const detailResponse = await agent.get('/api/ask/threads/thread-1')
+    expect(detailResponse.status).toBe(200)
+    expect(detailResponse.body.thread.isDeleted).toBe(true)
+  })
+
+  it('rejects deleting another resident reply', async () => {
+    const app = createApp()
+    const agent = request.agent(app)
+
+    await loginSeedAgent(agent, {
+      roomFragment: '12A',
+      wechatHandle: 'linayi12a',
+      pin: '111111',
+      deviceIdentityKey: 'seed-lin',
+    })
+
+    const response = await agent.post('/api/ask/replies/qreply-2/remove')
+
+    expect(response.status).toBe(403)
+    expect(response.body.error).toBe('not_reply_owner')
   })
 
   it('backfills older persisted stores that do not have ask arrays or sessions', async () => {

@@ -17,10 +17,19 @@ function apiUrl(path: string) {
   return new URL(path, API_BASE_URL.endsWith('/') ? API_BASE_URL : `${API_BASE_URL}/`).toString()
 }
 
+function createClientDeviceIdentity() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return `device-${crypto.randomUUID()}`
+  }
+
+  const fallback = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+  return `device-${fallback}`
+}
+
 function ensureDeviceIdentity() {
   const existing = localStorage.getItem(DEVICE_KEY)
   if (existing) return existing
-  const next = `device-${crypto.randomUUID()}`
+  const next = createClientDeviceIdentity()
   localStorage.setItem(DEVICE_KEY, next)
   return next
 }
@@ -170,12 +179,13 @@ export async function updatePost(id: string, input: {
   )
 }
 
-export async function createInterest(id: string) {
-  return parseJson<{ interest: { id: string } }>(
+export async function createInterest(id: string, input?: { offerPriceCny?: number }) {
+  return parseJson<{ interest: { id: string; offerPriceCny?: number | null } }>(
     await fetch(apiUrl(`/api/posts/${id}/interests`), {
       method: 'POST',
       headers: getHeaders(),
       credentials: 'include',
+      body: JSON.stringify(input ?? {}),
     }),
   )
 }
@@ -261,13 +271,33 @@ export async function createAskThread(input: { title: string; body?: string; ima
   )
 }
 
-export async function createAskReply(threadId: string, input: { body: string; parentReplyId?: string | null }) {
+export async function createAskReply(threadId: string, input: { body: string; imageUrl?: string; parentReplyId?: string | null }) {
   return parseJson<{ reply: { id: string } }>(
     await fetch(apiUrl(`/api/ask/threads/${threadId}/replies`), {
       method: 'POST',
       headers: getHeaders(),
       credentials: 'include',
       body: JSON.stringify(input),
+    }),
+  )
+}
+
+export async function removeAskThread(id: string) {
+  return parseJson<{ ok: boolean }>(
+    await fetch(apiUrl(`/api/ask/threads/${id}/remove`), {
+      method: 'POST',
+      headers: getHeaders(),
+      credentials: 'include',
+    }),
+  )
+}
+
+export async function removeAskReply(id: string) {
+  return parseJson<{ ok: boolean }>(
+    await fetch(apiUrl(`/api/ask/replies/${id}/remove`), {
+      method: 'POST',
+      headers: getHeaders(),
+      credentials: 'include',
     }),
   )
 }

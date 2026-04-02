@@ -37,6 +37,7 @@ export interface InterestedResident {
   nickname: string
   roomFragment: string
   createdAt?: string
+  offerPriceCny?: number | null
 }
 
 export interface PostItem {
@@ -58,6 +59,7 @@ export interface PostItem {
   interestUserIds: string[]
   interestedResidents?: InterestedResident[]
   alreadyInterested?: boolean
+  viewerOfferPriceCny?: number | null
   needsAttention?: boolean
   claimedByUserId?: string
   claimedAt?: string
@@ -94,11 +96,16 @@ export interface AskReply {
   parentReplyId?: string | null
   depth: number
   body: string
+  imageUrl?: string | null
   author: AskAuthor
   createdAt: string
   childReplyCount: number
+  isDeleted?: boolean
+  canDelete?: boolean
 }
 
 export interface AskThreadDetail extends AskThreadSummary {
   replies: AskReply[]
+  canDelete?: boolean
+  isDeleted?: boolean
 }

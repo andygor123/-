@@ -11,6 +11,8 @@ import {
   loadPost,
   loadPosts,
   loadProfile,
+  removeAskReply,
+  removeAskThread,
   removePost,
   saveProfile,
   updatePost as updatePostRequest,
@@ -45,6 +47,9 @@ type LoginDraft = {
   wechatHandle: string
   pin: string
 }
+type OfferDraft = {
+  offerPriceCny: string
+}
 
 const categoryOptions = ['家具', '家电', '家居', '母婴', '数码', '其他']
 const askCategoryOptions: Array<{ value: QuestionCategory; label: string }> = [
@@ -75,6 +80,11 @@ function formatPrice(post: Pick<PostItem, 'postType' | 'priceType' | 'priceCny'>
   }
 
   return post.postType === 'wanted' ? `期望 ¥${post.priceCny}` : `转让 ¥${post.priceCny}`
+}
+
+function formatOfferPrice(value?: number | null) {
+  if (!value) return '已表达兴趣'
+  return `出价 ¥${value}`
 }
 
 function sortPosts(items: PostItem[]) {
@@ -151,6 +161,7 @@ function App() {
   const [composerMode, setComposerMode] = useState<ComposerMode>(null)
   const [editingPostId, setEditingPostId] = useState<string | null>(null)
   const [selectedInterestedUserId, setSelectedInterestedUserId] = useState<string | null>(null)
+  const [showOfferComposer, setShowOfferComposer] = useState(false)
   const [showOptionalFields, setShowOptionalFields] = useState(false)
   const [formError, setFormError] = useState('')
   const [contactNotice, setContactNotice] = useState('')
@@ -161,6 +172,7 @@ function App() {
   const [detailAction, setDetailAction] = useState<'interest' | 'claim' | 'archive' | null>(null)
   const [busy, setBusy] = useState(false)
   const [askBusy, setAskBusy] = useState(false)
+  const [offerDraft, setOfferDraft] = useState<OfferDraft>({ offerPriceCny: '' })
   const [postDraft, setPostDraft] = useState({
     title: '',
     category: categoryOptions[0],
@@ -183,6 +195,8 @@ function App() {
     category: askCategoryOptions[0].value,
   })
   const [askReplyDraft, setAskReplyDraft] = useState('')
+  const [askReplyImageFile, setAskReplyImageFile] = useState<File | null>(null)
+  const [askReplyImagePreviewUrl, setAskReplyImagePreviewUrl] = useState<string | null>(null)
   const [askImagePreviewUrl, setAskImagePreviewUrl] = useState<string | null>(null)
 
   useEffect(() => {
@@ -289,6 +303,12 @@ function App() {
     [selectedAskThread],
   )
   const askHomeThreads = askThreads.length > 0 ? askThreads : askPreviewThreads
+  const selectedPostSupportsOffer = Boolean(
+    selectedPost?.postType === 'available' &&
+      selectedPost?.status === 'available' &&
+      (selectedPost?.priceType ?? 'free') === 'paid' &&
+      selectedPost?.ownerId !== currentProfile?.id,
+  )
   const currentReplyTarget = useMemo(
     () =>
       replyingToReplyId && selectedAskThread
@@ -322,8 +342,12 @@ function App() {
         wechatHandle: profileResult.residentIdentity?.wechatHandle ?? current.wechatHandle,
       }))
       setShowSignupFlow(profileResult.authState !== 'needs_login')
-    } catch {
-      setFormError('楼栋邀请码不正确，请向微信群里确认后再试。')
+    } catch (error) {
+      setFormError(
+        error instanceof Error && error.message === 'invalid_building_code'
+          ? '楼栋邀请码不正确，请向微信群里确认后再试。'
+          : '进入本楼失败，请刷新后再试。',
+      )
     } finally {
       setBusy(false)
     }
@@ -356,8 +380,12 @@ function App() {
       setAuthState('logged_in')
       await refreshPosts(activeTab)
       setFormError('')
-    } catch {
-      setFormError('资料保存失败，请稍后再试。')
+    } catch (error) {
+      setFormError(
+        error instanceof Error && error.message === 'resident_identity_taken'
+          ? '这个房号后缀和微信号已经登记过了，请直接去登录。'
+          : '资料保存失败，请稍后再试。',
+      )
     } finally {
       setBusy(false)
     }
@@ -562,22 +590,46 @@ function App() {
     }
   }
 
-  async function markInterested(postId: string) {
+  async function markInterested(postId: string, offerPriceInput?: string) {
     if (!currentProfile) return
+    const trimmedOfferPrice = offerPriceInput?.trim() ?? ''
+    const parsedOfferPrice = trimmedOfferPrice ? Number(trimmedOfferPrice) : NaN
+    const offerPriceCny = Number.isFinite(parsedOfferPrice) ? Math.round(parsedOfferPrice) : undefined
+
+    if (trimmedOfferPrice && (offerPriceCny === undefined || offerPriceCny <= 0)) {
+      setDetailNotice({ tone: 'error', message: '请填写合理出价。' })
+      return
+    }
+
     setDetailAction('interest')
     setDetailNotice({ tone: 'info', message: '正在提交你的意向…' })
     try {
-      await createInterest(postId)
+      await createInterest(postId, {
+        offerPriceCny,
+      })
       await refreshPosts()
       if (selectedPostId === postId) {
         const result = await loadPost(postId)
         setPosts((current) => current.map((post) => (post.id === postId ? result.post : post)))
       }
-      setDetailNotice({ tone: 'success', message: '已记录你的意向。现在可以继续用微信联系对方。' })
+      setShowOfferComposer(false)
+      setDetailNotice({
+        tone: 'success',
+        message: offerPriceCny
+          ? `已记录你的意向和出价 ¥${offerPriceCny}。现在可以继续用微信联系对方。`
+          : '已记录你的意向。现在可以继续用微信联系对方。',
+      })
     } catch (error) {
       setDetailNotice({
         tone: 'error',
-        message: error instanceof Error ? error.message : '操作失败，请稍后再试。',
+        message:
+          error instanceof Error && error.message === 'invalid_offer_price'
+            ? '请填写合理出价。'
+            : error instanceof Error && error.message === 'offer_not_supported'
+              ? '这条信息暂时不支持出价。'
+              : error instanceof Error
+                ? error.message
+                : '操作失败，请稍后再试。',
       })
     } finally {
       setDetailAction(null)
@@ -655,6 +707,7 @@ function App() {
       setSelectedAskThread(detail.thread)
       setReplyingToReplyId(null)
       setAskReplyDraft('')
+      setAskReplyImageFile(null)
       setExpandedAskReplyIds([])
       setFormError('')
     } catch (error) {
@@ -671,6 +724,7 @@ function App() {
       setSelectedAskThread(result.thread)
       setReplyingToReplyId(null)
       setAskReplyDraft('')
+      setAskReplyImageFile(null)
       setExpandedAskReplyIds([])
     } catch (error) {
       setFormError(error instanceof Error ? error.message : '帖子打开失败，请稍后再试。')
@@ -720,15 +774,21 @@ function App() {
   async function submitAskReply(event: FormEvent) {
     event.preventDefault()
     if (!selectedAskThread) return
-    if (!askReplyDraft.trim()) {
-      setFormError('请先写一点你想补充的内容。')
+    if (!askReplyDraft.trim() && !askReplyImageFile) {
+      setFormError('请先写一点内容，或补一张图。')
       return
     }
 
     setAskBusy(true)
     try {
+      let imageUrl: string | undefined
+      if (askReplyImageFile) {
+        imageUrl = await uploadImage(askReplyImageFile)
+      }
+
       await createAskReply(selectedAskThread.id, {
         body: askReplyDraft.trim(),
+        imageUrl,
         parentReplyId: replyingToReplyId,
       })
       const [detail, list, preview] = await Promise.all([
@@ -740,10 +800,55 @@ function App() {
       setAskThreads(list.threads)
       setAskPreviewThreads(preview.threads)
       setAskReplyDraft('')
+      setAskReplyImageFile(null)
       setReplyingToReplyId(null)
       setDetailNotice({ tone: 'success', message: '已補充到這條討論裡。' })
     } catch (error) {
       setFormError(error instanceof Error ? error.message : '补充失败，请稍后再试。')
+    } finally {
+      setAskBusy(false)
+    }
+  }
+
+  async function handleRemoveAskThread(threadId: string) {
+    setAskBusy(true)
+    try {
+      await removeAskThread(threadId)
+      const [list, preview] = await Promise.all([loadAskThreads(), loadAskThreads(3, true)])
+      setAskThreads(list.threads)
+      setAskPreviewThreads(preview.threads)
+      setSelectedAskThread(null)
+      setReplyingToReplyId(null)
+      setAskReplyDraft('')
+      setAskReplyImageFile(null)
+      setDetailNotice({ tone: 'success', message: '这条问问已删除。' })
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : '删除失败，请稍后再试。')
+    } finally {
+      setAskBusy(false)
+    }
+  }
+
+  async function handleRemoveAskReply(replyId: string) {
+    if (!selectedAskThread) return
+
+    setAskBusy(true)
+    try {
+      await removeAskReply(replyId)
+      const [detail, list, preview] = await Promise.all([
+        loadAskThread(selectedAskThread.id),
+        loadAskThreads(),
+        loadAskThreads(3, true),
+      ])
+      setSelectedAskThread(detail.thread)
+      setAskThreads(list.threads)
+      setAskPreviewThreads(preview.threads)
+      if (replyingToReplyId === replyId) {
+        setReplyingToReplyId(null)
+      }
+      setDetailNotice({ tone: 'success', message: '这条回复已删除。' })
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : '删除失败，请稍后再试。')
     } finally {
       setAskBusy(false)
     }
@@ -782,6 +887,18 @@ function App() {
       setPosts((current) => current.map((post) => (post.id === selectedPostId ? result.post : post)))
     })
   }, [selectedPostId])
+
+  useEffect(() => {
+    if (!selectedPost) {
+      setShowOfferComposer(false)
+      setOfferDraft({ offerPriceCny: '' })
+      return
+    }
+
+    setOfferDraft({
+      offerPriceCny: selectedPost.viewerOfferPriceCny ? String(selectedPost.viewerOfferPriceCny) : '',
+    })
+  }, [selectedPost])
 
   useEffect(() => {
     if (!detailNotice) return
@@ -824,6 +941,20 @@ function App() {
   }, [askThreadDraft.imageFile])
 
   useEffect(() => {
+    if (!askReplyImageFile) {
+      setAskReplyImagePreviewUrl(null)
+      return
+    }
+
+    const nextPreviewUrl = URL.createObjectURL(askReplyImageFile)
+    setAskReplyImagePreviewUrl(nextPreviewUrl)
+
+    return () => {
+      URL.revokeObjectURL(nextPreviewUrl)
+    }
+  }, [askReplyImageFile])
+
+  useEffect(() => {
     if (!selectedPost?.interestedResidents?.length) {
       setSelectedInterestedUserId(null)
       return
@@ -846,21 +977,31 @@ function App() {
     const firstChild = children[0]
 
     return (
-      <div key={reply.id} className={`ask-reply depth-${reply.depth}`}>
+      <div key={reply.id} className={`ask-reply depth-${reply.depth}${reply.isDeleted ? ' deleted' : ''}`}>
         <div className="ask-reply-meta">
           <strong>{reply.author.nickname}</strong>
           <span>{reply.author.roomFragment}</span>
           <span>{formatTime(reply.createdAt)}</span>
         </div>
         <p>{reply.body}</p>
+        {reply.imageUrl ? <img className="ask-reply-image" src={reply.imageUrl} alt="回复图片" /> : null}
         <div className="ask-reply-actions">
-          {reply.depth < 3 ? (
+          {!reply.isDeleted && reply.depth < 3 ? (
             <button
               type="button"
               className="ghost-button ask-inline-button"
               onClick={() => setReplyingToReplyId(reply.id)}
             >
               回复TA
+            </button>
+          ) : null}
+          {reply.canDelete ? (
+            <button
+              type="button"
+              className="ghost-button ask-inline-button ask-danger-button"
+              onClick={() => void handleRemoveAskReply(reply.id)}
+            >
+              删除
             </button>
           ) : null}
           {children.length > 0 && shouldCollapseChildren ? (
@@ -871,7 +1012,7 @@ function App() {
             >
               <span>{childrenExpanded ? '收起回复' : `展开 ${children.length} 条回复`}</span>
               {!childrenExpanded && firstChild ? (
-                <small>
+              <small>
                   {firstChild.author.nickname}：{firstChild.body}
                 </small>
               ) : null}
@@ -1570,6 +1711,7 @@ function App() {
             setSelectedAskThread(null)
             setReplyingToReplyId(null)
             setAskReplyDraft('')
+            setAskReplyImageFile(null)
           }}
         >
           <section className="detail-sheet ask-sheet" onClick={(event) => event.stopPropagation()}>
@@ -1733,6 +1875,17 @@ function App() {
                     <span>{selectedAskThread.replyCount} 条回复</span>
                     <span>{formatTime(selectedAskThread.lastActivityAt)}</span>
                   </div>
+                  {selectedAskThread.canDelete ? (
+                    <div className="button-row">
+                      <button
+                        type="button"
+                        className="ghost-button ask-inline-button ask-danger-button"
+                        onClick={() => void handleRemoveAskThread(selectedAskThread.id)}
+                      >
+                        删除这条
+                      </button>
+                    </div>
+                  ) : null}
                   {selectedAskThread.imageUrl ? (
                     <img className="ask-thread-detail-image" src={selectedAskThread.imageUrl} alt={selectedAskThread.title} />
                   ) : null}
@@ -1764,6 +1917,31 @@ function App() {
                     onChange={(event) => setAskReplyDraft(event.target.value)}
                     placeholder={replyingToReplyId ? '补充你对这条回复的看法…' : '把你的实测、经验或建议补进来…'}
                   />
+                  <label className="upload-field ask-reply-upload">
+                    <span>补一张图片（选填）</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={(event) => setAskReplyImageFile(event.target.files?.[0] ?? null)}
+                    />
+                    <span className="field-note">一张图就够，例如拍尺寸、位置、服务名片或现场情况。</span>
+                    {askReplyImagePreviewUrl ? (
+                      <div className="upload-preview-card ask-upload-preview">
+                        <img src={askReplyImagePreviewUrl} alt="回复图片预览" className="upload-preview-image" />
+                        <div className="upload-preview-meta">
+                          <strong>{askReplyImageFile?.name}</strong>
+                          <span>
+                            {askReplyImageFile
+                              ? `${Math.max(1, Math.round(askReplyImageFile.size / 1024))} KB`
+                              : ''}
+                          </span>
+                        </div>
+                        <button type="button" className="ghost-button" onClick={() => setAskReplyImageFile(null)}>
+                          重新选择
+                        </button>
+                      </div>
+                    ) : null}
+                  </label>
                   <button className="primary-button" type="submit" disabled={askBusy}>
                     {askBusy ? '提交中…' : replyingToReplyId ? '我来补充' : '回复这个问题'}
                   </button>
@@ -1876,17 +2054,25 @@ function App() {
                 {selectedPost.status === 'available' && selectedPost.ownerId !== currentProfile.id ? (
                   <button
                     className="primary-button"
-                    onClick={() => markInterested(selectedPost.id)}
-                    disabled={busy || detailAction === 'interest' || selectedPost.alreadyInterested}
+                    onClick={() =>
+                      selectedPostSupportsOffer ? setShowOfferComposer((current) => !current) : markInterested(selectedPost.id)
+                    }
+                    disabled={busy || detailAction === 'interest'}
                   >
                     {selectedPost.alreadyInterested
                       ? selectedPost.postType === 'wanted'
                         ? '已表示可以帮忙'
-                        : '已表达兴趣'
+                        : selectedPostSupportsOffer
+                          ? selectedPost.viewerOfferPriceCny
+                            ? '修改出价'
+                            : '补充出价'
+                          : '已表达兴趣'
                       : detailAction === 'interest'
                         ? '提交中…'
                       : selectedPost.postType === 'wanted'
                         ? '我可以帮忙'
+                        : selectedPostSupportsOffer
+                          ? '我感兴趣并出价'
                         : '我感兴趣'}
                   </button>
                 ) : null}
@@ -1902,6 +2088,49 @@ function App() {
               </div>
               {contactNotice ? <p className="detail-note">{contactNotice}</p> : null}
               {detailNotice ? <p className={`feedback-banner ${detailNotice.tone}`}>{detailNotice.message}</p> : null}
+              {selectedPostSupportsOffer && showOfferComposer ? (
+                <form
+                  className="offer-sheet"
+                  onSubmit={(event) => {
+                    event.preventDefault()
+                    void markInterested(selectedPost.id, offerDraft.offerPriceCny)
+                  }}
+                >
+                  <div className="offer-sheet-copy">
+                    <strong>{selectedPost.alreadyInterested ? '更新你的出价' : '留一个心理价位'}</strong>
+                    <p>这是可选项。你可以只表达兴趣，也可以直接告诉对方你愿意出的价格。</p>
+                  </div>
+                  <label>
+                    <span>我的出价（元）</span>
+                    <input
+                      value={offerDraft.offerPriceCny}
+                      onChange={(event) => setOfferDraft({ offerPriceCny: event.target.value })}
+                      inputMode="numeric"
+                      placeholder={`例如：${selectedPost.priceCny ? Math.max(1, selectedPost.priceCny - 20) : 120}`}
+                    />
+                  </label>
+                  <div className="button-row detail-action-row">
+                    <button
+                      type="button"
+                      className="ghost-button"
+                      onClick={() => setShowOfferComposer(false)}
+                      disabled={detailAction === 'interest'}
+                    >
+                      稍后再说
+                    </button>
+                    <button className="secondary-button" type="submit" disabled={detailAction === 'interest'}>
+                      {detailAction === 'interest'
+                        ? '提交中…'
+                        : selectedPost.alreadyInterested
+                          ? '更新意向和出价'
+                          : '提交意向'}
+                    </button>
+                  </div>
+                  {selectedPost.viewerOfferPriceCny ? (
+                    <p className="detail-note">你目前的出价：¥{selectedPost.viewerOfferPriceCny}</p>
+                  ) : null}
+                </form>
+              ) : null}
               {selectedPost.ownerId === currentProfile.id && selectedPost.status === 'available' ? (
                 <div className="owner-actions owner-zone">
                   <div className="owner-zone-header">
@@ -1925,6 +2154,7 @@ function App() {
                           >
                             <strong>{resident.nickname}</strong>
                             <span>{resident.roomFragment}</span>
+                            {resident.offerPriceCny ? <small>{formatOfferPrice(resident.offerPriceCny)}</small> : null}
                           </button>
                         ))}
                       </div>

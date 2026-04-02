@@ -82,8 +82,11 @@ function applyPostLifecycle(store: ReturnType<typeof readStore>) {
 function listView(req: express.Request, post: PostItem, users: ResidentProfile[], interestCount: number, viewerId?: string) {
   const owner = users.find((user) => user.id === post.userId)
   const store = readStore()
+  const viewerInterest = viewerId
+    ? store.postInterests.find((interest) => interest.postId === post.id && interest.userId === viewerId)
+    : null
   const alreadyInterested = viewerId
-    ? store.postInterests.some((interest) => interest.postId === post.id && interest.userId === viewerId)
+    ? Boolean(viewerInterest)
     : false
   const needsAttention = Boolean(
     viewerId &&
@@ -117,6 +120,7 @@ function listView(req: express.Request, post: PostItem, users: ResidentProfile[]
           nickname: resident?.nickname ?? '住户',
           roomFragment: resident?.roomFragment ?? '',
           createdAt: interest.createdAt,
+          offerPriceCny: interest.offerPriceCny ?? null,
         }
       }),
     createdAt: post.createdAt,
@@ -125,6 +129,7 @@ function listView(req: express.Request, post: PostItem, users: ResidentProfile[]
     removedAt: post.removedAt ?? null,
     interestCount,
     alreadyInterested,
+    viewerOfferPriceCny: viewerInterest?.offerPriceCny ?? null,
     needsAttention,
   }
 }
@@ -647,6 +652,7 @@ export function createApp() {
               nickname: resident?.nickname ?? '住户',
               roomFragment: resident?.roomFragment ?? '',
               createdAt: interest.createdAt,
+              offerPriceCny: interest.offerPriceCny ?? null,
             }
           }),
         ownerWechatHandle: canViewOwnerWechatHandle ? owner?.wechatHandle ?? null : null,
@@ -670,22 +676,25 @@ export function createApp() {
 
   app.get('/api/ask/threads/:id', requireSession(), (req, res) => {
     const store = readStore()
-    const thread = store.questionThreads.find((item) => item.id === req.params.id && !item.removedAt)
+    const thread = store.questionThreads.find((item) => item.id === req.params.id)
     if (!thread) {
       return res.status(404).json({ error: 'thread_not_found' })
     }
 
     const replies = store.questionReplies
-      .filter((reply) => reply.threadId === thread.id && !reply.removedAt)
+      .filter((reply) => reply.threadId === thread.id)
       .sort((left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime())
       .map((reply) => ({
         id: reply.id,
         threadId: reply.threadId,
         parentReplyId: reply.parentReplyId ?? null,
         depth: reply.depth,
-        body: reply.body,
+        body: reply.removedAt ? '该内容已删除' : reply.body,
+        imageUrl: reply.removedAt ? null : absoluteUploadUrl(req, reply.imageUrl),
         author: residentIdentity(reply.userId, store.users),
         createdAt: reply.createdAt,
+        isDeleted: Boolean(reply.removedAt),
+        canDelete: req.user?.id === reply.userId && !reply.removedAt,
         childReplyCount: store.questionReplies.filter(
           (candidate) => candidate.parentReplyId === reply.id && !candidate.removedAt,
         ).length,
@@ -695,6 +704,10 @@ export function createApp() {
       thread: {
         ...threadSummary(req, thread, store.questionReplies, store.users),
         replies,
+        body: thread.removedAt ? '该内容已删除' : thread.body ?? null,
+        imageUrl: thread.removedAt ? null : absoluteUploadUrl(req, thread.imageUrl),
+        canDelete: req.user?.id === thread.userId && !thread.removedAt,
+        isDeleted: Boolean(thread.removedAt),
       },
     })
   })
@@ -738,9 +751,10 @@ export function createApp() {
     const user = req.user!
     const threadId = req.params.id
     const body = String(req.body?.body ?? '').trim()
+    const imageUrl = String(req.body?.imageUrl ?? '').trim()
     const parentReplyId = String(req.body?.parentReplyId ?? '').trim() || undefined
 
-    if (!body) {
+    if (!body && !imageUrl) {
       return res.status(400).json({ error: 'reply_body_required' })
     }
 
@@ -771,6 +785,7 @@ export function createApp() {
       parentReplyId,
       depth,
       body,
+      imageUrl: imageUrl || undefined,
       createdAt: now,
       updatedAt: now,
     }
@@ -791,6 +806,90 @@ export function createApp() {
     }))
 
     return res.status(201).json({ reply: { id: reply.id } })
+  })
+
+  app.post('/api/ask/threads/:id/remove', requireSession(), (req, res) => {
+    const user = req.user!
+    const threadId = req.params.id
+    const current = readStore()
+    const thread = current.questionThreads.find((item) => item.id === threadId)
+
+    if (!thread) {
+      return res.status(404).json({ error: 'thread_not_found' })
+    }
+
+    if (thread.userId !== user.id) {
+      return res.status(403).json({ error: 'not_thread_owner' })
+    }
+
+    if (thread.removedAt) {
+      return res.json({ ok: true })
+    }
+
+    const now = new Date().toISOString()
+    updateStore((store) => ({
+      ...store,
+      questionThreads: store.questionThreads.map((item) =>
+        item.id === threadId
+          ? {
+              ...item,
+              removedAt: now,
+              updatedAt: now,
+            }
+          : item,
+      ),
+    }))
+
+    return res.json({ ok: true })
+  })
+
+  app.post('/api/ask/replies/:id/remove', requireSession(), (req, res) => {
+    const user = req.user!
+    const replyId = req.params.id
+    const current = readStore()
+    const reply = current.questionReplies.find((item) => item.id === replyId)
+
+    if (!reply) {
+      return res.status(404).json({ error: 'reply_not_found' })
+    }
+
+    if (reply.userId !== user.id) {
+      return res.status(403).json({ error: 'not_reply_owner' })
+    }
+
+    if (reply.removedAt) {
+      return res.json({ ok: true })
+    }
+
+    const now = new Date().toISOString()
+    updateStore((store) => ({
+      ...store,
+      questionReplies: store.questionReplies.map((item) =>
+        item.id === replyId
+          ? {
+              ...item,
+              removedAt: now,
+              updatedAt: now,
+            }
+          : item,
+      ),
+      questionThreads: store.questionThreads.map((thread) =>
+        thread.id === reply.threadId
+          ? {
+              ...thread,
+              replyCount: Math.max(
+                0,
+                store.questionReplies.filter((item) => item.threadId === reply.threadId && !item.removedAt && item.id !== replyId)
+                  .length,
+              ),
+              lastActivityAt: now,
+              updatedAt: now,
+            }
+          : thread,
+      ),
+    }))
+
+    return res.json({ ok: true })
   })
 
   app.post('/api/posts', requireSession(), (req, res) => {
@@ -902,6 +1001,7 @@ export function createApp() {
   app.post('/api/posts/:id/interests', requireSession(), (req, res) => {
     const user = req.user!
     const postId = req.params.id
+    const rawOfferPriceCny = req.body?.offerPriceCny
 
     const current = readStore()
     const post = current.posts.find((item) => item.id === postId)
@@ -909,14 +1009,48 @@ export function createApp() {
       return res.status(400).json({ error: 'post_not_available' })
     }
 
-    if (current.postInterests.some((interest) => interest.postId === postId && interest.userId === user.id)) {
-      return res.status(409).json({ error: 'already_interested' })
+    const normalizedOfferPriceCny =
+      rawOfferPriceCny === null || rawOfferPriceCny === undefined || rawOfferPriceCny === ''
+        ? undefined
+        : Math.round(Number(rawOfferPriceCny))
+
+    if (
+      normalizedOfferPriceCny !== undefined &&
+      (!Number.isFinite(normalizedOfferPriceCny) || normalizedOfferPriceCny <= 0)
+    ) {
+      return res.status(400).json({ error: 'invalid_offer_price' })
+    }
+
+    if (
+      normalizedOfferPriceCny !== undefined &&
+      !(post.postType === 'available' && (post.priceType ?? 'free') === 'paid')
+    ) {
+      return res.status(400).json({ error: 'offer_not_supported' })
+    }
+
+    const existingInterest = current.postInterests.find((interest) => interest.postId === postId && interest.userId === user.id)
+    if (existingInterest) {
+      const updated = updateStore((store) => ({
+        ...store,
+        postInterests: store.postInterests.map((interest) =>
+          interest.id === existingInterest.id
+            ? {
+                ...interest,
+                offerPriceCny: normalizedOfferPriceCny,
+              }
+            : interest,
+        ),
+      }))
+
+      const interest = updated.postInterests.find((item) => item.id === existingInterest.id)!
+      return res.json({ interest })
     }
 
     const interest = {
       id: `interest-${crypto.randomUUID()}`,
       postId,
       userId: user.id,
+      offerPriceCny: normalizedOfferPriceCny,
       createdAt: new Date().toISOString(),
     }
 

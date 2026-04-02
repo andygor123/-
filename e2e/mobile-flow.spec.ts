@@ -1,5 +1,7 @@
 import { expect, test } from '@playwright/test'
 
+const TEST_BUILDING_CODE = 'SZHOME'
+
 test.beforeEach(async ({ request }) => {
   const response = await request.post('http://127.0.0.1:8787/api/test/reset')
   expect(response.ok()).toBeTruthy()
@@ -16,12 +18,21 @@ async function loginSeedResident(
     window.localStorage.setItem('building-board-device-key', key)
   }, deviceIdentityKey)
   await page.goto('/')
-  await page.getByPlaceholder('例如：NS1C').fill('SZHOME')
-  await page.getByRole('button', { name: '进入本楼' }).click()
-  await page.getByLabel('房号后缀').fill(roomFragment)
-  await page.getByLabel('微信号').fill(wechatHandle)
-  await page.getByLabel('6 位 PIN').fill(pin)
-  await page.getByRole('button', { name: '登录' }).click()
+  const autoLoggedIn = await page
+    .locator('.lane-switcher')
+    .waitFor({ state: 'visible', timeout: 2500 })
+    .then(() => true)
+    .catch(() => false)
+
+  if (!autoLoggedIn) {
+    await page.getByPlaceholder('例如：NS1C').fill(TEST_BUILDING_CODE)
+    await page.getByRole('button', { name: '进入本楼' }).click()
+    await expect(page.getByRole('heading', { name: '进入科技生态园1C栋' })).toBeVisible()
+    await page.getByLabel('房号后缀').fill(roomFragment)
+    await page.getByLabel('微信号').fill(wechatHandle)
+    await page.getByLabel('6 位 PIN').fill(pin)
+    await page.getByRole('button', { name: '登录' }).click()
+  }
   await expect(page.locator('.lane-switcher')).toBeVisible()
 }
 
@@ -39,8 +50,9 @@ async function openAskLane(page: import('@playwright/test').Page) {
 test('mobile resident can enter, create available post, then see it in list', async ({ page }) => {
   await page.goto('/')
 
-  await page.getByPlaceholder('例如：NS1C').fill('SZHOME')
+  await page.getByPlaceholder('例如：NS1C').fill(TEST_BUILDING_CODE)
   await page.getByRole('button', { name: '进入本楼' }).click()
+  await expect(page.getByLabel('昵称')).toBeVisible()
 
   await page.getByLabel('昵称').fill('阿May')
   await page.getByLabel('房号后缀').fill('1609')
